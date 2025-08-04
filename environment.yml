@@ -1,0 +1,19 @@
+name: gfed5enrt
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.9
+  - pandas
+  - xarray
+  - numpy
+  - scipy
+  - pyproj
+  - requests
+  - beautifulsoup4
+  - geopandas
+  - pyhdf
+  - pynio
+  - netcdf4
+  - h5netcdf
+  - rasterio
