@@ -1,6 +1,6 @@
-# GFED5eNRT.py - GFED5 Extension NRT Version Burned Area and Emissions Calculation
+# GFED5 Extension NRT Version (GFED5eNRT) Burned Area and Emissions Calculation
 
-This Python script, `GFED5eNRT.py`, is a standalone tool designed to calculate the GFED5 extension NRT (Near Real-Time) version of burned area (BA) and emissions (EM) at a 0.25-degree resolution. It leverages VIIRS 375m active fire data and employs a 2-step scaling approach.
+This Python script is a standalone tool designed to calculate the GFED5 extension NRT (Near Real-Time) version of burned area (BA) and emissions (EM) at a 0.25-degree resolution. It leverages VIIRS 375m active fire data and employs a 2-step scaling approach.
 
 ## Purpose
 
