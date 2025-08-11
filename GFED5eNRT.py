@@ -1,81 +1,22 @@
-import os
 """ GFED5e NRT
    ----------------
 
     This is a stand-alone python code to run the GFED5 extension NRT version (GFED5eNRT) burned area (BA) and emissions (EM).
    
-    In this code, we derived the extension version of daily NRT GFED5 burned area and emissions (at 0.25 deg resolution) from the VIIRS 375m active fire data. The VIIRS active fire counts are recorded and categorized to different burning types based on land cover types. The GFED5eNRT burned area and emissions are calculated based on 2-step scaling approaches. First, pre-derived effective fire area (EFA) scalars were used to convert the daily VIIRS active fire number (VAF) to daily burned area at 0.25 degree resolution (GFED5eNRT BA). Then, pre-calculated fuel consumption (FC) scalars were combined with GFED5eNRT BA to derive daily burned area at 0.25 degree resolution (GFED5eNRT EM). 
+    In this code, we derived the extension version of daily NRT GFED5 burned area and emissions (at 0.25 deg resolution) from the VIIRS 375m active fire data. The VIIRS active fire counts are recorded and categorized to different burning types based on land cover types. The GFED5eNRT burned area and emissions are calculated based on 2-step scaling approaches. First, pre-derived effective fire area (EFA) scalars were used to convert the daily VIIRS active fire number (VAF) to daily burned area at 0.25 degree resolution (GFED5eNRT BA). Then, pre-calculated fuel consumption (FC) scalars were combined with GFED5eNRT BA to derive daily burned area at 0.25 degree resolution (GFED5eNRT EM). We combined the output data into two data streams: GFED5eNRTeco contains VAF, BA and EM data for 16 classes; GFED5eNRTspe contains EM data for individual chemical (gas and aerosol) species.
 
-    This code is able to automatically
-        * Search for the days needed to update the GFED5e NRT data
-        * For each day,
-            1) Read and update VIIRS 375m active fire data (either NRT data from LANCE or standard data from LAADS DAAC)
-            2) Record VAF to 500m resolution (including scan angle correction)
-            3) Record VAF over burning types for each 0.25 deg grid cell (including deforestation correction)
-            4) Use EFA scalar to convert VAF to BA
-            5) Use FC scalar to convert BA to EM
-
-    The current code can be run on redwood.ess.uci.edu. 
-    |__Code: The current python script code
-    |__Input: The needed input data
-            - Earthdata_token.txt: NASA Earthdata token (may need regular update)
-
-            - GFED51VFA_regtp.csv: scalar to convert VAF to BA
-            - GFED51FC_regtp.csv: scalar to convert BA to EM
-            - VIIRSsplwgt_2019-2021.csv: weights for scan angle correction 
-            - GFED51_EF.csv: table of emission factors
-
-            - MaskDefonly: 500m Deforestation only mask (not overlapped with MaskPeat)
-            - Sample.MCD64A1.hdf: sample 500m MODIS BA data (used for data structure only)
-
-            - fVAF_Defo_2013-2022.nc: climatological mean deforestation fraction for active fires
-            - CFmean_2014-2023.nc: climatological mean cloud fraction
-            - fraction_forest_BA.txt: 0.25 deg forest fraction averaged over 2001-2003
-            - GFEDregions_025d.tif: 0.25 deg GFED region mask
-            - mjLCT_MCD12C1_0.25x0.25.hdf: 0.25 deg major land cover type data
-            - MCD12Q1_LCd_025d_2022.tif: 0.25 deg GFED5 land cover data for 2022
-
-            - VNP14IMG: VIIRS monthly standard active fire data (from fuoco)
-            - VNP14IMGDL: VIIRS daily standard active fire data (from LAADS DAAC)
-            - VNP14IMG_NRT: VIIRS daily NRT active fire data (from LANCE)
-            - MOD500mLatLon: MODIS 500m latitude and longitude data
-            - MaskPeat: 500m Peatland mask
-            - MaskDef_2022: 500m Deforestation mask for 2022
-            - MCD12Q1_LCd_2022: 500m MODIS land cover data for 2022
-    |__Intermediate: The intermediate data created during the running of this script
-            - VIIRSFC: 500m VAF data
-    |__Output: The output data
-            - BA: GFED5e NRT BA
-            - EM: GFED5e NRT EM
-            - VAF: daily VAF at 0.25 degree
-
-    Burning type classification
-        * Four burning type classification schemes: Modified MODIS LCT (MOD), GFED5 BA LCT (GBA), GFED5 16-class LCT (G16), GFED5 6-class LCT (G6)
-            * EFA - GBA
-            * FC - G16 & G6      
-            * VFA - GBA
-            * BA - G16 (by converting VFA from GBA to G16 in the VFA to BA scaling) & G6
-            * EM - G16 & G6
-
-    Running instructions
-    ---------------------
-    - Set python environment
-        The following external python modules are needed for running the code: pyhdf, gdal, xarray, numpy, pandas, pyproj,pynio, scipy.
-    - Set running directory
-        Modify `dirData` to the running directory.
-    - Set NASA Earthdata credential
-        Copy your own token to `Earthdata_token.txt` in the `Input` subdirectory.
-    - Run the code
+    See `README.md` for more detail about this code.
+    
+    Yang Chen (yang.chen@uci.edu)
 """
 
-# All the data (or links to the data) are located in this directory
-# dirData = os.path.expanduser('~/GoogleDrive/My/My.Research/UCI/ProjectData/GFED5/GFED51NRTrun/')
-dirData = os.path.expanduser('~/GFED5eNRT/')
-dirVNP14IMGML = os.path.join(dirData, 'Input', 'VNP14IMGML')
-
+import os
 import numpy as np
 import pandas as pd
 import xarray as xr
+import userconfig
+dirData = userconfig.dirData  # project directory
+
 
 # ----------------------------------------------------------------------------------------------------
 # Constants
@@ -92,7 +33,7 @@ GFEDnms = ['OCEA', 'BONA', 'TENA', 'CEAM', 'NHSA', 'SHSA', 'EURO', 'MIDE', 'NHAF
 LCnms = ['Water_W','Boreal_F','Tropic_F','Temper_F','Mosaic_FS', 'Tropic_SH',
         'Temper_SH','Temper_G','Woody_SA', 'Open_SA', 'Tropic_G',
         'Wetland_W', 'Tropic_C', 'Urban_U', 'Temper_C', 'Snow_SI',
-         'Barren_B', 'Boreal_FS', 'Tundra_T', 'Boreal_C']         # name
+         'Barren_B', 'Boreal_FS', 'Tundra_T', 'Boreal_C']        
 LCnms_full = ['Water','Forest boreal','Forest tropical','Forest temperate','Sparse temperate mosaic','Shrublands tropical','Shrublands temperate','Grasslands temperate','Savanna woody','Savanna open','Grasslands tropical','Wetlands','Croplands tropical','Urban','Croplands temperate','Snow/ice','Barren','Sparse boreal forest','Tundra','Croplands boreal']
 
 # 16-class Land cover names for GFED5.1 emissions
@@ -186,6 +127,126 @@ def nowarn():
     if not sys.warnoptions:
         warnings.simplefilter("ignore")
 
+def delete_files(file_list):
+    """
+    Deletes all files in the provided list.
+
+    Args:
+        file_list (list): List of file paths to delete.
+    """
+    for file_path in file_list:
+        try:
+            os.remove(file_path)
+            print(f"Deleted: {file_path}")
+        except FileNotFoundError:
+            print(f"File not found: {file_path}")
+        except PermissionError:
+            print(f"Permission denied: {file_path}")
+        except Exception as e:
+            print(f"Error deleting {file_path}: {e}")
+
+def sftp_upload(
+    ftpurl,
+    ftpun,
+    ftppw,
+    local_path,
+    remote_dir="/",
+    ftpport=22
+):
+    """
+    Upload a file to an SFTP server.
+
+    Parameters
+    ----------
+    ftpurl : str
+        The SFTP server URL or IP address.
+    local_path : str
+        The path of the local file to upload.
+    remote_dir : str, optional
+        The remote directory on the SFTP server where the file will be uploaded; default is '/'.
+    ftpport : int, optional
+        The port number for the SFTP connection; default is 22.
+
+    Returns
+    -------
+    None
+    """
+    import paramiko
+    
+    # Retrieve credentials from environment variables for security
+    # ftpun = os.environ.get("SFTP_UN")
+    # ftppw = os.environ.get("SFTP_PW")
+
+    # Exit if credentials aren't found
+    if not ftpun or not ftppw:
+        print("Error: SFTP username or password not found in environment variables.")
+        return
+
+    # Set remote destination path
+    local_filename = os.path.basename(local_path)
+    remote_path = os.path.join(remote_dir, local_filename).replace("\\", "/") # Handles Windows paths
+    
+    transport = None
+    sftp = None
+    try:
+        # Establish the SFTP connection
+        transport = paramiko.Transport((ftpurl, ftpport))
+        transport.connect(username=ftpun, password=ftppw)
+        sftp = paramiko.SFTPClient.from_transport(transport)
+        
+        # Upload the file
+        sftp.put(local_path, remote_path)
+        
+        print(f"File '{local_filename}' successfully uploaded to '{ftpurl}:{remote_path}'")
+        
+    except Exception as e:
+        print(f"Error occurred during SFTP upload: {e}")
+        
+    finally:
+        # Close the SFTP client and transport
+        if sftp:
+            sftp.close()
+        if transport:
+            transport.close()
+
+def py_wget(base_url, edl_token, output_directory=".", no_if_modified_since=True):
+    """
+    Downloads data from the specified URL using wget with authentication and specific parameters.
+
+    Args:
+        base_url (str): The URL of the data to download.
+        edl_token (str): The Earthdata Login token for authentication.
+        output_directory (str): The directory to save the downloaded data. Defaults to the current directory.
+    """
+    import subprocess
+
+    # Construct the wget command
+    command = [
+        "wget",
+        "-e", "robots=off",
+        "-N", # turn on timestamping
+        "-m",  # Mirror the directory structure
+        "-np",  # No parent directory traversal
+        "-R", ".html,.tmp",  # Reject files with extensions .html and .tmp
+        "-nH",  # No host directories
+        "--cut-dirs=3",  # Remove the first 3 directories from the path
+        base_url,
+        "--header", f"Authorization: Bearer {edl_token}",  # Add the Authorization header
+        "-P", output_directory  # Set the output directory
+    ]
+
+    # Optionally add --no-if-modified-since
+    if no_if_modified_since:
+        command.append("--no-if-modified-since")
+
+    # Run the command using subprocess
+    try:
+        subprocess.run(command, check=True)
+        print(f"Data successfully downloaded to {output_directory}")
+    except subprocess.CalledProcessError as e:
+        print(f"Error occurred while downloading data: {e}")
+        # sys.exit()
+        
 # functions used to read intermediate and output data
 def read_BA(yr,mo,day):
     """ read BA dataset from the output directory
@@ -219,6 +280,7 @@ def read_VNP14IMG_NRT_daily(yr,mo,day):
 def read_VNP14IMGML_daily(yr,mo,day,ver='C2.02', usecols=["YYYYMMDD", "HHMM", "Lat", "Lon", "Line", "Sample", "FRP", "Confidence", "Type", "DNFlag"]):
     """ Optionally use VIIRS daily data from monthly standard data (VNP14IMGML)
     """    
+    dirVNP14IMGML = os.path.join(dirData, 'Input', 'VNP14IMGML')
     # set monthly VNP14IMGML file name
     fnmFC = os.path.join(dirVNP14IMGML,'VNP14IMGML.' + str(yr) + str(mo).zfill(2) + '.' + ver + '.csv')
     
@@ -519,7 +581,7 @@ def set_FCtile_ds(arrFC_month):
     # dsMOD = xr.open_dataset(fnmhdf,engine='pynio')
     # dsMOD = dsMOD.assign(FC = dsMOD['Burn_Date'])
 
-    dsMOD = xr.open_dataset(fnmhdf,engine='netcdf4')
+    dsMOD = xr.open_dataset(fnmhdf,engine='netcdf4', decode_timedelta=True)
     dsMOD = dsMOD.assign(FC = dsMOD['Burn Date'])
 
     # replace values of FC with VAF in each 500m grid cell
@@ -729,6 +791,17 @@ def getPEATM(vh,vv):
 
 # Step 0: VIIRS data download and pre-processing
 def read_earthdata_token():
+    """ Extract saved Earthdata token from system
+    """
+    token = os.environ.get("EARTHDATA_PAT")
+    if token is None:
+        print(f"❌ Error: Please set your EARTHDATA_PAT environment variable")
+        return None        
+    else:
+        return token
+    
+# the following old approach is not safe, and should be removed (tother with the Earthdata_token.txt)
+def read_earthdata_token_old():
     """
     Reads an Earthdata token from a specified text file.
 
@@ -842,7 +915,6 @@ def get_remote_ts(url, edl_token):
                     # Catch any other unexpected errors during parsing
                     print(f"Warning: An error occurred processing link '{href}': {e}")
 
-
     except requests.exceptions.Timeout:
         print(f"Error: Request to {url} timed out.")
     except requests.exceptions.RequestException as e:
@@ -853,44 +925,6 @@ def get_remote_ts(url, edl_token):
         print(f"An unexpected error occurred: {e}")
 
     return available_times
-
-def py_wget(base_url, edl_token, output_directory=".", no_if_modified_since=True):
-    """
-    Downloads data from the specified URL using wget with authentication and specific parameters.
-
-    Args:
-        base_url (str): The URL of the data to download.
-        edl_token (str): The Earthdata Login token for authentication.
-        output_directory (str): The directory to save the downloaded data. Defaults to the current directory.
-    """
-    import subprocess
-
-    # Construct the wget command
-    command = [
-        "wget",
-        "-e", "robots=off",
-        "-N", # turn on timestamping
-        "-m",  # Mirror the directory structure
-        "-np",  # No parent directory traversal
-        "-R", ".html,.tmp",  # Reject files with extensions .html and .tmp
-        "-nH",  # No host directories
-        "--cut-dirs=3",  # Remove the first 3 directories from the path
-        base_url,
-        "--header", f"Authorization: Bearer {edl_token}",  # Add the Authorization header
-        "-P", output_directory  # Set the output directory
-    ]
-
-    # Optionally add --no-if-modified-since
-    if no_if_modified_since:
-        command.append("--no-if-modified-since")
-
-    # Run the command using subprocess
-    try:
-        subprocess.run(command, check=True)
-        print(f"Data successfully downloaded to {output_directory}")
-    except subprocess.CalledProcessError as e:
-        print(f"Error occurred while downloading data: {e}")
-        # sys.exit()
 
 def checkts_VNP14IMG_daily(edl_token, yr,mo,day, NRT=False):
     """ check if VNP14IMG for all times in a day is available"""
@@ -917,7 +951,6 @@ def download_VNP14IMG_daily(edl_token, yr, mo, day, no_if_modified_since=True, N
     Args:
         base_url (str): The URL of the VIIRS active fire data to download.
         edl_token (str): The Earthdata Login token for authentication.
-        output_directory (str): The directory to save the downloaded VIIRS active fire data. Defaults to the current directory.
     """
 
     if NRT:
@@ -925,19 +958,8 @@ def download_VNP14IMG_daily(edl_token, yr, mo, day, no_if_modified_since=True, N
     else:
         base_url="https://ladsweb.modaps.eosdis.nasa.gov/archive/allData/5200/VNP14IMG/"
     url = base_url + str(yr) + '/' + strdoy(yr,mo,day) + '/'
-
-    # download the data only if the daily data is complete
-    available_times = get_remote_ts(url, edl_token)
-    if len(available_times) == 0:
-        print(f"Warning: VNP14IMG data is incomplete for {yr}-{mo}-{day} from {base_url}.")
-        return False
-
-    if max(available_times) == '2354':
-        py_wget(url, edl_token, dirData+'Input/', no_if_modified_since=no_if_modified_since)
-        return True
-    else:
-        print(f"Warning: VNP14IMG data is incomplete for {yr}-{mo}-{day} from {base_url}.")
-        return False
+    
+    py_wget(url, edl_token, dirData+'Input/', no_if_modified_since=no_if_modified_since)
 
 def check_VNP14IMG_presence(yr,mo,day):
     """ check if VNP14IMG data is available for a day """
@@ -954,23 +976,34 @@ def check_VNP14IMG_presence(yr,mo,day):
 
     return filepresenceflag
 
-def delete_files(file_list):
+def delete_subdirs_and_files(directory_path):
     """
-    Deletes all files in the provided list.
+    Deletes all subdirectories and files within the specified directory.
 
     Args:
-        file_list (list): List of file paths to delete.
+        directory_path (str): Path to the directory to clean.
     """
-    for file_path in file_list:
+
+    import shutil
+    if not os.path.isdir(directory_path):
+        print(f"Not a directory: {directory_path}")
+        return
+
+    for entry in os.listdir(directory_path):
+        full_path = os.path.join(directory_path, entry)
         try:
-            os.remove(file_path)
-            print(f"Deleted: {file_path}")
+            if os.path.isfile(full_path) or os.path.islink(full_path):
+                os.remove(full_path)
+                print(f"Deleted file: {full_path}")
+            elif os.path.isdir(full_path):
+                shutil.rmtree(full_path)
+                print(f"Deleted directory: {full_path}")
         except FileNotFoundError:
-            print(f"File not found: {file_path}")
+            print(f"Not found: {full_path}")
         except PermissionError:
-            print(f"Permission denied: {file_path}")
+            print(f"Permission denied: {full_path}")
         except Exception as e:
-            print(f"Error deleting {file_path}: {e}")
+            print(f"Error deleting {full_path}: {e}")
 
 def convert_VNP14IMG_to_DL(yr,mo,day,clean=False):
     """
@@ -1024,24 +1057,20 @@ def make_VNP14IMGDL(yr,mo,day,upd=False):
         return True
 
     # otherwise, download VNPIMG or VNPIMG_NRT data and convert to fire location data
-
-    # get the earthdata token
-    edl_token = read_earthdata_token()
-
-    # download VNP14IMG or VNP14IMG_NRT data (netcdf)   
+    edl_token = read_earthdata_token() # get the earthdata token
     dlflag = False
-    if checkts_VNP14IMG_daily(edl_token, yr,mo,day, NRT=False):
+    VNP14IMG_data_complete = checkts_VNP14IMG_daily(edl_token, yr,mo,day, NRT=False)
+    VNP14IMG_NRT_complete = checkts_VNP14IMG_daily(edl_token, yr, mo, day, NRT=True)
+    if VNP14IMG_data_complete: # preferred data source is VNP14IMG in LAADS
         print("...downloading VNP14IMG data...")
-        dlflag = download_VNP14IMG_daily(edl_token, yr, mo, day, no_if_modified_since=True, NRT=False)
-    else: # only if VNP14IMG not available, download VNP14IMG_NRT data
-        if checkts_VNP14IMG_daily(edl_token, yr, mo, day, NRT=True):
-            print("...downloading VNP14IMG_NRT data...")
-            dlflag = download_VNP14IMG_daily(edl_token, yr, mo, day, no_if_modified_since=True, NRT=True)
-
-    # convert data to text
-    if dlflag:
+        dlflag = download_VNP14IMG_daily(edl_token, yr, mo, day, no_if_modified_since=True, NRT=False)  # force redownload by `no_if_modified_since`
         print("...converting VIIRS datta...")
-        convert_VNP14IMG_to_DL(yr, mo, day, clean=True)    
+        convert_VNP14IMG_to_DL(yr, mo, day, clean=True) 
+    elif VNP14IMG_NRT_complete:  # only if VNP14IMG not available, try downloading VNP14IMG_NRT data from LANCE
+        print("...downloading VNP14IMG_NRT data...")
+        dlflag = download_VNP14IMG_daily(edl_token, yr, mo, day, no_if_modified_since=True, NRT=True)
+        print("...converting VIIRS datta...")
+        convert_VNP14IMG_to_DL(yr, mo, day, clean=True) 
 
     return dlflag
 
@@ -2170,7 +2199,7 @@ def doCFscl(da, daCF):
     return da_scl
 
 # ----------------------------------------------------------------------------------------------------
-# Creating figures showing cumulative regional sum (in comparison to climatological data)
+# Creating figures showing daily and cumulative regional sum (in comparison to climatological data)
 # ----------------------------------------------------------------------------------------------------
 
 def readGFED5eco(yr, mo=None, day=None, vnm='EM'):
@@ -2290,11 +2319,12 @@ def updateGFEDregsum(df, df_day, yr, vnm):
     pandas.DataFrame
         Updated DataFrame with new regional sums.
     """
-    if df.empty:
+    
+    if df is None:
         # If df is empty, initialize it with df_day
         df_updated = df_day.copy()
     else:
-        df_updated = df.append(df_day)
+        df_updated = pd.concat([df,df_day],axis=0)
     
     # save updated GFED regional sums to CSV
     fnm = dirData + 'Output/' + str(yr) + '/GFED5eNRTcumu' + vnm + '_' + str(yr) + '.csv'
@@ -2302,48 +2332,206 @@ def updateGFEDregsum(df, df_day, yr, vnm):
          
     return df_updated
 
-def readclimcumudata(vnm='EM'):
-    pass
-    return climcumudata
+def readGFED5clim():
+    fnmGFED5 = os.path.join(dirData, 'Input', 'table_EM_2002-2022.csv')
+    df_all = pd.read_csv(fnmGFED5, index_col=[0, 1], parse_dates=["time"])
+    return df_all
 
-def generatecumufig(yr, vnm, df_updated=None):
+def getGFED5climTotal():
+    df_all = readGFED5clim()
+    EM_Total_mo = df_all.xs('Globe',level='Reg')['Total']  # g C/mon
+    EM_Total_mo.name = 'globe'
+    for regnm in GFEDnms[1:]:
+        EM_Total_mo_reg = df_all.xs(regnm,level='Reg')['Total']
+        EM_Total_mo_reg.name = regnm
+        EM_Total_mo = pd.concat([EM_Total_mo,EM_Total_mo_reg],axis=1)
+    return EM_Total_mo
+
+def monthly_to_yearly_dayofyear_mean(monthly_series):
+    """
+    Converts a pandas Series with monthly datetime indices to a DataFrame
+    with 'dayofyear' indices and columns representing the daily means
+    calculated from the monthly data.
+
+    Args:
+        monthly_series (pd.Series): A pandas Series with monthly datetime indices.
+
+    Returns:
+        pd.DataFrame: A DataFrame with 'dayofyear' indices (1 to 365 or 366)
+                      and columns representing the daily means for each year
+                      present in the original monthly series.
+    """
+    yearly_data = {}
+    years = monthly_series.index.year.unique()
+
+    for year in years:
+        monthly_data_year = monthly_series[monthly_series.index.year == year]
+        if not monthly_data_year.empty:
+            # Create a daily index for the entire year
+            start_date = pd.to_datetime(f'{year}-01-01')
+            end_date = pd.to_datetime(f'{year}-12-31')
+            daily_index = pd.date_range(start=start_date, end=end_date, freq='D')
+            daily_means = pd.Series(index=daily_index)
+
+            # Calculate and map daily means for each month
+            for month_date, monthly_value in monthly_data_year.items():
+                first_day_of_month = pd.to_datetime(f'{month_date.year}-{month_date.month}-01')
+                last_day_of_month = (first_day_of_month + pd.offsets.MonthEnd(0))
+                num_days = (last_day_of_month - first_day_of_month).days + 1
+                daily_mean_value = monthly_value / num_days
+
+                # Assign the daily mean to all days of the month
+                daily_means[first_day_of_month:last_day_of_month] = daily_mean_value
+
+            # Extract day of year as the new index
+            yearly_data[year] = pd.Series(daily_means.values, index=daily_means.index.dayofyear)
+
+    # Concatenate the yearly daily series into a DataFrame
+    df_dayofyear_mean = pd.DataFrame(yearly_data)
+    return df_dayofyear_mean
+
+def plttsfig(EM_Total_mo, df_updated, cumu=False):
+    import matplotlib.pyplot as plt
+
+    c_other, c_current = '0.8', 'red'
+    fig, axes = plt.subplots(ncols=5,nrows=3, figsize=(14, 8))
+    axs = axes.ravel()
+
+    # calculate global sum from climatology and updated data
+    df_clim_globe  = monthly_to_yearly_dayofyear_mean(EM_Total_mo['globe']/1e12)
+    df_updated_globe = df_updated['globe'].copy()/1e12
+    df_updated_globe.index = pd.to_datetime(df_updated_globe.index, format='mixed').dayofyear
+
+    # plot global sum
+    if cumu:
+        df_clim_globe = df_clim_globe.cumsum()
+        df_updated_globe = df_updated_globe.cumsum()
+    df_clim_globe.plot(ax=axs[0],legend=False,color=c_other)
+    df_updated_globe.plot(ax=axs[0],legend=False,color=c_current)
+    axs[0].text(0.02,0.98, 'Global', transform=axs[0].transAxes, ha="left", va="top", 
+    fontsize=12, color="k")
+
+    for i, reg in enumerate(GFEDnms[1:]):
+        df_clim_reg  = monthly_to_yearly_dayofyear_mean(EM_Total_mo[reg]/1e12)
+        df_updated_reg = df_updated[reg].copy()/1e12
+        df_updated_reg.index = pd.to_datetime(df_updated_reg.index, format='mixed').dayofyear
+
+        if cumu:
+            df_clim_reg = df_clim_reg.cumsum()
+            df_updated_reg = df_updated_reg.cumsum()
+        df_clim_reg.plot(ax=axs[i+1],legend=False,color=c_other)
+        df_updated_reg.plot(ax=axs[i+1],legend=False,color=c_current)
+        axs[i+1].text(0.02,0.98, reg, transform=axs[i+1].transAxes, ha="left", va="top", 
+        fontsize=12, color="k")
+
+    lastdate = df_updated.index[-1]
+    if cumu:
+        tt = f'Cumulative global and regional fire emissions (Tg C) \n updated on {lastdate}'
+    else:
+        tt = f'Daily global and regional fire emissions (Tg C / day) \n updated on {lastdate}'
+    fig.suptitle(tt)
+    _=plt.tight_layout()
+
+    print(f'Figure updated for {lastdate}')
+    
+    return fig
+
+def updatetsdata(yr, mo, day, vnm='EM'):
+    """
+    Update the cumulative emissions data by appending daily emission sums
+    from the day after the last saved date up to the specified target date.
+
+    Parameters:
+    -----------
+    yr : int
+        Target year to update up to.
+    mo : int
+        Target month.
+    day : int
+        Target day.
+    vnm : str, optional
+        Variable name to read and update (default is 'EM').
+
+    Returns:
+    --------
+    df : pandas.DataFrame
+        Updated cumulative emissions DataFrame.
+    """
+    from datetime import timedelta, date
+    
+    # Load existing cumulative emissions data
+    df = readcumudata(yr, vnm=vnm)
+
+    # Safely parse the last date in the index to a datetime.date object
+    last_date_str = df.index.max()
+    last_date = pd.to_datetime(last_date_str).date()
+
+    # Define the target end date
+    target_date = date(yr, mo, day)
+
+    # If data is already current, return unchanged
+    if last_date >= target_date:
+        print("Data is already up to date.")
+        return df
+
+    # Loop from the day after last_date up to and including target_date
+    current_date = last_date + timedelta(days=1)
+    while current_date <= target_date:
+        print(f"Processing data for {current_date.isoformat()}...")
+
+        # Read daily emissions
+        da = readGFED5eco(current_date.year, mo=current_date.month, day=current_date.day, vnm=vnm)
+
+        # Aggregate daily emissions data
+        df_day = doGFEDregsum(da, current_date.year, current_date.month, current_date.day)
+
+        # Update cumulative DataFrame
+        df = updateGFEDregsum(df, df_day, current_date.year, vnm)
+
+        # Move to next day
+        current_date += timedelta(days=1)
+
+    return df
+
+def generatetsfig(yr, vnm, df_updated=None):
     # If df_updated is not provided, read the updated cumulative data
     if df_updated is None:
         df_updated = readcumudata(yr, vnm='EM')
 
     # read climatological cumulative data
-    climcumudata = readclimcumudata(vnm=vnm)
+    EM_Total_mo = getGFED5climTotal()
 
-    # plot the updated data with climatological data
-    import matplotlib.pyplot as plt
-    fig, ax = plt.subplots(figsize=(10, 6))
-    df_updated.plot(ax=ax, marker='o', title=f'Cumulative {vnm} Emissions for {yr}', grid=True)
-    ax.set_xlabel('Date')
-    ax.set_ylabel(f'Cumulative {vnm} Emissions (gC)')
-    plt.xticks(rotation=45)
-    plt.tight_layout()
-    plt.show()
-    
+    # generate updated figs
+    figdaily = plttsfig(EM_Total_mo, df_updated, cumu=False)
+    figcumu = plttsfig(EM_Total_mo, df_updated, cumu=True)
+
     # save the figure
-    fig_path = dirData + 'Output/' + str(yr) + '/GFED5eNRTcumu' + vnm + '_' + str(yr) + '.png'
-    fig.savefig(fig_path)
-    
-def update_cumufig(yr, mo, day, vnm='EM'):
+    fig_path = dirData + 'Output/' + str(yr) + '/' 
+    fnmdaily = fig_path+'GFED5eNRTdaily' + vnm + '_' + str(yr) + '.png'
+    fnmcumu = fig_path+'GFED5eNRTcumu' + vnm + '_' + str(yr) + '.png'
+    figdaily.savefig(fnmdaily)
+    figcumu.savefig(fnmcumu)
 
-    # load current cumulative emissions data
-    df = readcumudata(yr, vnm=vnm)
+    # upload figures to sftp server
+    sftp_upload(userconfig.ftpurl, userconfig.ftpun, userconfig.ftppw,
+        fnmdaily, remote_dir=userconfig.ftpdir, ftpport=userconfig.ftpport)    
+    sftp_upload(userconfig.ftpurl, userconfig.ftpun, userconfig.ftppw,
+        fnmcumu, remote_dir=userconfig.ftpdir, ftpport=userconfig.ftpport)
     
-    # read the daily data
-    da = readGFED5eco(yr, mo=mo, day=day, vnm=vnm)
+def update_to_now_figs(vnm='EM', genfig=True):
+
+    from datetime import datetime
+
+    # Get the latest GFED5eNRT date
+    date_now = datetime.now().date()
+    date_GFED5 = get_GFED5_lastday(date_now.year)
     
-    # calculate global/regional sums for the daily data 
-    df_day = doGFEDregsum(da, yr, mo, day)
-    
-    # update the cumulative emissions DataFrame
-    df_updated = updateGFEDregsum(df, df_day, yr, vnm)
-    
+    # update the cumulative data
+    _ = updatetsdata(date_GFED5.year, date_GFED5.month, date_GFED5.day, vnm=vnm)
+
     # generate the updated cumulative figure
-    generatecumufig(yr, vnm, df_updated=df_updated)
+    if genfig:
+        generatetsfig(date_GFED5.year, vnm)
     
 
 # Optional step : Convert GFED5eNRT from daily to monthly
@@ -2502,7 +2690,7 @@ def run_1day(yr, mo, day, IMG=True, upd=False):
 
     print(f"Running for {yr}-{mo}-{day}")
 
-    print("...downloading data from NASA server...")
+    print("...downloading data from NASA server and creating fire location data...")
     if IMG:
         dlflag = make_VNP14IMGDL(yr, mo, day, upd=upd)
     else:
@@ -2546,20 +2734,19 @@ def get_GFED5_lastday(yr):
                                otherwise None.
     """
     import os
-    from datetime import datetime
-
+    from datetime import datetime,date
+    from glob import glob
+        
     # Construct the directory path for the specified data type
     dirGFED = os.path.join(dirData, 'Output', str(yr))
 
-    # List all files in the directory
-    try:
-        files = os.listdir(dirGFED)
-    except FileNotFoundError:
-        print(f"Warning: Directory not found: {dirGFED}")
-        return None
+    # List all `GFED5eNRTeco` files in the directory
+    all_paths = glob(dirGFED+'/GFED5eNRTeco*.nc',)
+    files = [os.path.basename(path) for path in all_paths if os.path.isfile(path)]
 
     if not files:
-        return None  # No matching files found
+        print(f"Starting from the start of {yr}")
+        return date(yr-1, 12, 31) # No matching files found
 
     # Extract dates from file names.
     dates = []
@@ -2571,10 +2758,12 @@ def get_GFED5_lastday(yr):
             continue
 
     if not dates:
-        return None # No valid dates extracted from filenames
+        print(f"Starting from the start of {yr}")
+        return date(yr-1, 12, 31) # No valid dates extracted from filenames
 
     # Find and return the latest date
     latest_date = max(dates)
+    print(f"Last GFED5 data available up to: {latest_date}")
     return latest_date
 
 def update_to_now():
@@ -2588,14 +2777,8 @@ def update_to_now():
 
     # Get the current date and the last available date of GFED5eNRT EM data
     date_now = datetime.now().date()
-    date_GFED5 = get_GFED5_lastday(date_now.year)
-
-    # If no GFED5 data is found, start updating from the beginning of the current year
-    if date_GFED5 is None:
-        date_GFED5 = datetime(date_now.year, 1, 1).date()
-        print(f"No existing GFED5 data found. Starting update from {date_GFED5}.")
-    else:
-        print(f"Last GFED5 data available up to: {date_GFED5}")
+    year_now = date_now.year
+    date_GFED5 = get_GFED5_lastday(year_now)
     
     # If the last availabe date is before the current date, call `run_1day()` for each day between the two dates
     if date_now > date_GFED5:
@@ -2606,11 +2789,16 @@ def update_to_now():
         for day_offset in range(1, date_difference.days + 1):
             date_run = date_GFED5 + timedelta(days=day_offset)
             print(f"Processing update for {date_run.year}-{date_run.month}-{date_run.day}...")
-            # Always use the IMG option for operational update
-            run_1day(date_run.year, date_run.month, date_run.day, IMG=True)
+            # Always use IMG option for operational update
+            run_1day(date_run.year, date_run.month, date_run.day, IMG=True, upd=True)
     else:
         print("GFED5 data is already up to date with VIIRS data.")
-
+        
+    # Clean files
+    delete_subdirs_and_files(dirData+'Input/VNP14IMG/'+str(year_now))
+    delete_subdirs_and_files(dirData+'Input/VNP14IMG_NRT/'+str(year_now))
+    delete_subdirs_and_files(dirData+'Intermediate/VAF500m/'+str(year_now))
+    
 # other bulk run functions
 def run_1mon(yr, mo, IMG=False, upd=False):
     ''' generate GFED5eNRT for all days in a single month: call `run_1day()` for each day
@@ -2627,16 +2815,17 @@ def run_1mon(yr, mo, IMG=False, upd=False):
 # ----------------------------------------------------------------------------------------------------
 if __name__ == '__main__':
     # nowarn()
-
     # ------------------------------------------------------------------
     # GFED5eNRT run
     # -------------
 
     update_to_now()  # Update GFED5eNRT to the latest date with VIIRS data
+    # update_to_now_figs()
 
     # run_1day(2025,7,20, IMG=True, upd=True)  # Derive GFED5 betaV BA and EM for 1 day
     # run_1day(2025,1,1, IMG=True, upd=False)
-    # run_1mon(2025,3,IMG=True, upd=True)
+    # run_1mon(2025,1,IMG=True, upd=True)
+    # run_1mon(2025,2,IMG=True, upd=True)
 
     # ------------------------------------------------------------------
     # GFED5e run

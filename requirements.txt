@@ -1,0 +1,14 @@
+pandas
+xarray
+numpy
+scipy
+pyproj
+requests
+beautifulsoup4
+geopandas
+pyhdf
+pynio
+netcdf4
+h5netcdf
+rasterio
+paramiko
