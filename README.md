@@ -28,9 +28,10 @@ The script expects and generates data within the following directory structure r
 1.  **Set up Python environment:** Ensure the following external Python modules are installed using `requirements.txt` (pip) or `environment.yml` (conda).
 2.  **Set up configurations:** Change values in `userconfig.py`
     - running directory
-    - system environmental variables
+    - system environment variables
     - sftp site information
-3.  **Run the code:** Execute the Python script `GFED5eNRT.py` or the shell script `GFED5eNRT.sh` (or set up an automatic run schedule using tools such as [cron](https://en.wikipedia.org/wiki/Cron)).
+3.  **Run the code:** Execute the Python script `GFED5eNRT.py` or the shell script `GFED5eNRT.sh`
+4.  **Automatic running:** Set up an automatic run schedule using tools such as [Cron](https://en.wikipedia.org/wiki/Cron). Since Cron launches /bin/sh without loading user-specific shell config files such as .bashrc, so the environment variables are missing. To fixed, either source the environment file in the script by adding `source ~/.bashrc` before the python execute line, or set the variables inside the cron job by adding `MY_ENV_VAR="some_value"`.
 
 ## Data
 ### Input
