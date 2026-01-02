@@ -1,7 +1,12 @@
 #!/bin/bash
 # export PATH="/home/ychen17/miniforge3/envs/work/bin:$PATH"
 START_TIME=$(date +%s)
+
+# --------------------------
+# This part is used to get account/token information from shell env file.
+# Note this may not work for a cron job. In order to run the code through a cron job, please set the env variables directly in the cron job script.
 source /home/ychen17/.bashrc
+# --------------------------
 # /home/ychen17/miniforge3/envs/work/bin/python ~/GFED5eNRT/Code/GFED5eNRT.py > /dev/null 2>&1
 PYTHON_BIN="/home/ychen17/miniforge3/envs/work/bin/python"
 SCRIPT_PATH="/home/ychen17/GFED5eNRT/Code/GFED5eNRT.py"

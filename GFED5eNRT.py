@@ -15,8 +15,20 @@ import numpy as np
 import pandas as pd
 import xarray as xr
 import userconfig
-dirData = userconfig.dirData  # project directory
+import pyproj
+import datetime
+import concurrent.futures
+import time
+from typing import Tuple, List, Any
+import calendar
+import warnings
+warnings.filterwarnings(
+    action="ignore", 
+    category=FutureWarning,
+    module="osgeo.gdal"
+)
 
+dirData = userconfig.dirData  # project directory
 
 # ----------------------------------------------------------------------------------------------------
 # Constants
@@ -38,6 +50,17 @@ LCnms_full = ['Water','Forest boreal','Forest tropical','Forest temperate','Spar
 
 # 16-class Land cover names for GFED5.1 emissions
 EMLCnms = ['Tundra','Sparse boreal forest','Boreal forest','Temperate grassland','Temperate shrubland','Temperate mosaic','Temperate forest','Tropical grassland','Tropical shrubland','Open savanna','Woody savanna','Tropical forest','Other','Cropland','Peat','Deforestation']
+
+# --- MODIS CONSTANTS ---
+T = 1111950.5197665233
+Xmin = -20015109.355797417
+Ymax = 10007554.677898709
+R0 = 6371007.181000       # Earth radius in [m]
+LIMIT_LEFT = -20015109.354 # left limit of MODIS grid in [m]
+LIMIT_TOP = 10007554.677  # top limit of MODIS grid in [m]
+TILE_SIZE_METERS = R0 * np.pi / 18. # m, height/width of MODIS tile
+NDIM_500M = 2400         # Number of cells (2400)
+REAL_RES_500M = ((abs(LIMIT_LEFT) * 2) / 36) / NDIM_500M # actual size for each pixel (500m)
 
 # ----------------------------------------------------------------------------------------------------
 # Utility functions
@@ -70,8 +93,7 @@ def strdoy(yr, mo, day):
     Returns:
         str: Day of year as a zero-padded 3-character string (e.g., '001' to '366').
     """
-    from datetime import datetime
-    doy = datetime(yr, mo, day).timetuple().tm_yday
+    doy = datetime.datetime(yr, mo, day).timetuple().tm_yday
     strdoy = str(doy).zfill(3)
     return strdoy
 
@@ -246,39 +268,87 @@ def py_wget(base_url, edl_token, output_directory=".", no_if_modified_since=True
     except subprocess.CalledProcessError as e:
         print(f"Error occurred while downloading data: {e}")
         # sys.exit()
-        
+
+def upload_file_WUR(fnmout):
+    # upload data to WUR server
+    try:
+        sftp_upload(userconfig.ftpurl_WUR, userconfig.ftpun_WUR, userconfig.ftppw_WUR,
+            fnmout, remote_dir=userconfig.ftpdir_WUR, ftpport=userconfig.ftpport_WUR)
+    except:
+        print(f'The uploading of {fnmout} to WUR ftp server is unsuccessful')
+
 # functions used to read intermediate and output data
-def read_BA(yr,mo,day):
+def read_BA(yr,mo,day,sat='VNP'):
     """ read BA dataset from the output directory
     """
     import xarray as xr
     import os
-    fnm = dirData+'Intermediate/BA/'+str(yr)+'/BA_'+strymd(yr,mo,day)+'.nc'
+    fnm = dirData+'Intermediate/BA/'+str(yr)+'/BA_'+sat+'_'+strymd(yr,mo,day)+'.nc'
     if os.path.exists(fnm):
         ds = xr.open_dataset(fnm)
     else:
         ds = None
     return ds
 
-def read_EM(yr,mo,day):
+def read_EM(yr,mo,day,sat='VNP'):
     """ read EM dataset from the output directory
     """
     import xarray as xr
-    ds = xr.open_dataset(dirData+'Intermediate/EM/'+str(yr)+'/EM_'+strymd(yr,mo,day)+'.nc')
+    ds = xr.open_dataset(dirData+'Intermediate/EM/'+str(yr)+'/EM_'+sat+'_'+strymd(yr,mo,day)+'.nc')
     return ds
 
-def read_VNP14IMG_NRT_daily(yr,mo,day,sat='NP'):
+def read_VNP14IMG_NRT_daily(yr,mo,day,sat='VNP'):
     import pandas as pd
-    from datetime import datetime
     stryr = str(yr)
-    doy = datetime(yr,mo,day).timetuple().tm_yday
+    doy = datetime.datetime(yr,mo,day).timetuple().tm_yday
     strdoy = str(doy).zfill(3)
-    fnm = dirData + 'Input/V'+sat+'14IMGDL/V'+sat+'14IMGDL_'+stryr+strdoy+'.csv'
+    fnm = dirData + 'Input/'+sat+'14IMGDL/'+sat+'14IMGDL_'+stryr+strdoy+'.csv'
     df = pd.read_csv(fnm,index_col=0)
     return df
 
+def read_VNP14IMGML(yr,mo,day=None,sat='VNP',ver='C2.04', usecols=["YYYYMMDD", "HHMM", "Lat", "Lon", "Line", "Sample", "FRP", "Confidence", "Type", "DNFlag"]):
+    """ Optionally use VIIRS monthly or daily data from monthly standard data (VNP14IMGML or VJ114IMGML)
+    """       
+    # set monthly VNP14IMGML or VJ114IMGML file name
+    if sat == 'VNP':
+        dirin = os.path.join(dirData, 'Input', 'VNP14IMGML')
+    elif sat == 'VJ1':
+        dirin = os.path.join(dirData, 'Input', 'VJ114IMGML')
+    
+    fnmFC = os.path.join(dirin,sat+'14IMGML.' + str(yr) + str(mo).zfill(2) + '.' + ver + '.csv')
+    
+    # read data
+    if os.path.exists(fnmFC):
+        df = pd.read_csv(
+            fnmFC,
+            parse_dates=["YYYYMMDD"],
+            usecols=usecols,
+            skipinitialspace=True,
+            low_memory=False
+        )
+        
+         # sometimes the FRP value is '*******' and cause incorrect dtype, need to correct this
+        df = df.replace('**********',0)
+        df = df.replace('*******',0)
+        df['FRP'] = df['FRP'].astype('float')
+
+        # filter to get vegetation fire only
+        df = df[df['Type'] == 0]
+
+        # extract daily data
+        if day is not None:
+            df = df[df.YYYYMMDD == pd.to_datetime(str(yr)+'-'+str(mo).zfill(2)+'-'+str(day).zfill(2))]
+
+        return df
+    else:
+        print('No data available for file',fnmFC)
+        return None
+    
 def read_VNP14IMGML_daily(yr,mo,day,ver='C2.02', usecols=["YYYYMMDD", "HHMM", "Lat", "Lon", "Line", "Sample", "FRP", "Confidence", "Type", "DNFlag"]):
-    """ Optionally use VIIRS daily data from monthly standard data (VNP14IMGML)
+    """ 
+    !!! Should be removed !!!
+    
+    Optionally use VIIRS daily data from monthly standard data (VNP14IMGML)
     """    
     dirVNP14IMGML = os.path.join(dirData, 'Input', 'VNP14IMGML')
     # set monthly VNP14IMGML file name
@@ -310,13 +380,13 @@ def read_VNP14IMGML_daily(yr,mo,day,ver='C2.02', usecols=["YYYYMMDD", "HHMM", "L
         print('No data available for file',fnmFC)
         return None
 
-def read_GFED5eco(yr,mo,day):
+def read_GFED5eco(yr,mo,day,sat='VNP'):
     """ read daily GFED5eco dataset from the output directory
     """
     import xarray as xr
     import os
 
-    fnm = dirData+'Output/'+str(yr)+'/GFED5eNRTeco_'+strymd(yr,mo,day)+'.nc'
+    fnm = dirData+'Output/'+str(yr)+'/GFED5eNRTeco_'+sat+'_'+strymd(yr,mo,day)+'.nc'
     if os.path.exists(fnm):
         ds = xr.open_dataset(fnm)
     else:
@@ -571,6 +641,136 @@ def get_tile_paras(vh,vv):
 
     return strhv,xs,ys,MODgt,bb
 
+class MODISTileProcessor:
+    """
+    A class to hold constants and pre-initialized pyproj transformer,
+    optimized for fast MODIS tile geotransform and bounding box calculation.
+    """
+    def __init__(self):
+        # 1. Pre-calculate grid cell size
+        ng = NDIM_500M
+        self.w = T / ng
+
+        # 2. Pre-create i (col) and j (row) grids (constant for 2400x2400)
+        self.i_grid, self.j_grid = np.meshgrid(np.arange(NDIM_500M), np.arange(NDIM_500M))
+        
+        # 3. Pre-initialize the constant pyproj Transformer (CRITICAL SPEEDUP)
+        sinus_prj4 = "+proj=sinu +lon_0=0 +x_0=0 +y_0=0 +a=6371007.181 +b=6371007.181 +units=m +no_defs"
+        self.transformer_inverse = pyproj.Transformer.from_proj(
+            pyproj.Proj(sinus_prj4),    # from MODIS Sinusoidal
+            pyproj.Proj("EPSG:4326"),   # to WGS84 (lon/lat)
+            always_xy=True
+        )
+
+        # 4. Pre-select boundary indices for fast Bounding Box calculation
+        n = NDIM_500M
+        
+        # Get the i, j indices for the border of the tile (top, bottom, left, right edges)
+        border_i = np.concatenate([
+            self.i_grid[0, :],         # Top edge (j=0)
+            self.i_grid[-1, :],        # Bottom edge (j=n-1)
+            self.i_grid[:, 0],         # Left edge (i=0)
+            self.i_grid[:, -1]         # Right edge (i=n-1)
+        ])
+        border_j = np.concatenate([
+            self.j_grid[0, :],         # Top edge (j=0)
+            self.j_grid[-1, :],        # Bottom edge (j=n-1)
+            self.j_grid[:, 0],         # Left edge (i=0)
+            self.j_grid[:, -1]         # Right edge (i=n-1)
+        ])
+        
+        # Use only unique indices (to avoid transforming the 4 corners multiple times)
+        unique_indices = np.unique(np.stack([border_i, border_j], axis=1), axis=0)
+        self.border_i_flat = unique_indices[:, 0]
+        self.border_j_flat = unique_indices[:, 1]
+        
+    # --------------------------------------------------------------------------
+    # Helper Methods
+    # --------------------------------------------------------------------------
+
+    def MODtileij2xy_array(self, H, V):
+        """Vectorized computation of x, y coordinates for the full grid."""
+        # Compute x and y for the entire grid
+        x = (self.i_grid + 0.5) * self.w + H * T + Xmin
+        y = Ymax - (self.j_grid + 0.5) * self.w - V * T
+        return x, y
+
+    def sinusproj_array_optimized(self, x, y):
+        """Optimized sinusoidal projection using the pre-initialized transformer."""
+        # This is fast because it's only called on the boundary points now
+        lon, lat = self.transformer_inverse.transform(x, y)
+        return lon, lat
+
+    def MODtilegt_optimized(self, H, V):
+        """Get the geotransform information in a MODIS tile (H,V)."""
+        
+        # define geotransformation
+        gt0 = LIMIT_LEFT + H * TILE_SIZE_METERS
+        gt3 = LIMIT_TOP - V * TILE_SIZE_METERS
+        gt1 = REAL_RES_500M
+        gt5 = -REAL_RES_500M
+        gt = [gt0, gt1, 0, gt3, 0, gt5]
+        return gt
+
+    def getMODlatlon_boundary(self, vh, vv):
+        """
+        Calculates lon/lat only for the boundary coordinates of the tile.
+        This is done to quickly derive the bounding box.
+        """
+        # 1. Get x, y coordinates for ALL cells
+        x_all, y_all = self.MODtileij2xy_array(vh, vv)
+        
+        # 2. Extract only the boundary coordinates using pre-calculated indices
+        x_border = x_all[self.border_j_flat, self.border_i_flat]
+        y_border = y_all[self.border_j_flat, self.border_i_flat]
+        
+        # 3. Convert ONLY the boundary x, y to lon, lat
+        lon_border, lat_border = self.sinusproj_array_optimized(x_border, y_border)
+        
+        return lon_border, lat_border
+
+    def getMODlatlon(self, vh, vv):
+            """Read lat/lon for a MOD tile using pre-initialized objects."""
+            # Get x, y coordinates for the MOD tile
+            x, y = self.MODtileij2xy_array(vh, vv)
+            
+            # Convert x, y to lon, lat using sinusoidal projection
+            # This call is now much faster!
+            lon, lat = self.sinusproj_array_optimized(x, y)
+            
+            return lon, lat
+
+    # --------------------------------------------------------------------------
+    # Target Function
+    # --------------------------------------------------------------------------
+
+    def get_tile_paras(self, vh, vv):
+        ''' return parameters of a tile
+        '''
+        strhv = 'h' + str(vh).zfill(2) + 'v' + str(vv).zfill(2)
+        xs, ys = NDIM_500M, NDIM_500M
+        
+        # 1. Get Geotransform (Fast)
+        MODgt = self.MODtilegt_optimized(vh, vv)
+        
+        # 2. Get Boundary Lat/Lon (Optimized and Fast)
+        Tlon_border, Tlat_border = self.getMODlatlon_boundary(vh, vv)
+        
+        # 3. Calculate Bounding Box (Fast)
+        # Bounding box (min_lat, max_lat, min_lon, max_lon)
+        bb = (
+            np.nanmin(Tlat_border), 
+            np.nanmax(Tlat_border), 
+            np.nanmin(Tlon_border), 
+            np.nanmax(Tlon_border)
+        )
+
+        # Note: If you need the full Tlon and Tlat arrays later, you will need to 
+        # run the full (slow) transformation separately, but for the parameters
+        # requested, this is complete and highly optimized.
+
+        return strhv, xs, ys, MODgt, bb
+
 def set_FCtile_ds(arrFC_month):
     ''' Based on the input 2d array of FC data, generate a dataset that is formatted the same as MCD64A1 (using a sample MCD64A1 hdf file as reference)
     '''
@@ -786,7 +986,7 @@ def getPEATM(vh,vv):
         return None
     
 # ----------------------------------------------------------------------------------------------------
-# Main steps
+# GFEDextNRT steps
 # ----------------------------------------------------------------------------------------------------
 
 # Step 0: VIIRS data download and pre-processing
@@ -926,7 +1126,7 @@ def get_remote_ts(url, edl_token):
 
     return available_times
 
-def geturl_VNP14IMG_daily(yr,mo,day,NRT=False,sat='NP'):
+def geturl_VNP14IMG_daily(yr,mo,day,NRT=False,sat='VNP'):
     """ return the remote VNP14IMG daily data path url"""
 
     # data source from MODAPS and LADS
@@ -935,19 +1135,19 @@ def geturl_VNP14IMG_daily(yr,mo,day,NRT=False,sat='NP'):
 
     # pick source based on NRT flag
     if NRT:
-        base_url = modaps_svr + f'V{sat}14IMG_NRT/'
+        base_url = modaps_svr + f'{sat}14IMG_NRT/'
     else:
-        base_url = lads_svr + f'V{sat}14IMG/'
+        base_url = lads_svr + f'{sat}14IMG/'
 
     # for NOAA21(J2), only data source is MODAPS
-    if sat == 'J2':
-        base_url = modaps_svr + f'V{sat}14IMG_NRT/'
+    if sat == 'VJ2':
+        base_url = modaps_svr + f'{sat}14IMG_NRT/'
 
     # the final daily data path
     url = base_url + str(yr) + '/' + strdoy(yr,mo,day) + '/'
     return url
 
-def checkts_VNP14IMG_daily(edl_token, yr,mo,day, NRT=False, sat='NP'):
+def checkts_VNP14IMG_daily(edl_token, yr,mo,day, NRT=False, sat='VNP'):
     """ check if VNP14IMG for all times in a day is available"""
 
     # if NRT:
@@ -966,7 +1166,24 @@ def checkts_VNP14IMG_daily(edl_token, yr,mo,day, NRT=False, sat='NP'):
     else:
         return False
 
-def download_VNP14IMG_daily(edl_token, yr, mo, day, no_if_modified_since=True, NRT=False, sat='NP'):
+def checkempty_VNP14IMG_daily(edl_token, yr,mo,day, NRT=False, sat='VNP'):
+    """ check if VNP14IMG in a day is empty"""
+
+    # if NRT:
+    #     base_url="https://nrt3.modaps.eosdis.nasa.gov/archive/allData/5200/VNP14IMG_NRT/"
+    # else:
+    #     base_url="https://ladsweb.modaps.eosdis.nasa.gov/archive/allData/5200/VNP14IMG/"
+    # url = base_url + str(yr) + '/' + strdoy(yr,mo,day) + '/'
+
+    url = geturl_VNP14IMG_daily(yr,mo,day,NRT=NRT,sat=sat)
+    # download the data only if the daily data is complete
+    available_times = get_remote_ts(url, edl_token)
+    if len(available_times) == 0:
+        return True 
+    else:
+        return False
+
+def download_VNP14IMG_daily(edl_token, yr, mo, day, no_if_modified_since=True, NRT=False, sat='VNP'):
     """
     Downloads Suomi-NPP VIIRS active fire data from LANCE using wget with authentication and specific parameters.
 
@@ -984,16 +1201,15 @@ def download_VNP14IMG_daily(edl_token, yr, mo, day, no_if_modified_since=True, N
     url = geturl_VNP14IMG_daily(yr,mo,day,NRT=NRT,sat=sat)
     py_wget(url, edl_token, dirData+'Input/', no_if_modified_since=no_if_modified_since)
 
-def check_VNP14IMG_presence(yr,mo,day,sat='NP'):
+def check_VNP14IMG_presence(yr,mo,day,sat='VNP'):
     """ check if local VNP14IMG data is available for a day """
     from glob import glob
-    from datetime import datetime
 
     stryr = str(yr)
-    doy = datetime(yr,mo,day).timetuple().tm_yday
+    doy = datetime.datetime(yr,mo,day).timetuple().tm_yday
     strdoy = str(doy).zfill(3)
 
-    fnms = glob(dirData + 'Input/V'+sat+'14IMG/'+stryr+'/'+strdoy+'/V'+sat+'14IMG.A'+stryr+strdoy+'*.nc')
+    fnms = glob(dirData + 'Input/'+sat+'14IMG/'+stryr+'/'+strdoy+'/'+sat+'14IMG.A'+stryr+strdoy+'*.nc')
 
     filepresenceflag = (len(fnms) > 0)
 
@@ -1028,23 +1244,22 @@ def delete_subdirs_and_files(directory_path):
         except Exception as e:
             print(f"Error deleting {full_path}: {e}")
 
-def convert_VNP14IMG_to_DL(yr,mo,day,clean=False,sat='NP'):
+def convert_VNP14IMG_to_DL(yr,mo,day,clean=False,sat='VNP'):
     """
     This function reads VNP14 netCDF files (either standard or NRT data) and extracts fire pixel data (text) into fire location data (VNP14IMGDL).
     """
     from glob import glob
-    from datetime import datetime
     import xarray as xr 
     import pandas as pd
     stryr = str(yr)
-    doy = datetime(yr,mo,day).timetuple().tm_yday
+    doy = datetime.datetime(yr,mo,day).timetuple().tm_yday
 
     # get VNP14IMG file names for the day (if not available, use VNP14IMG_NRT files)
     if check_VNP14IMG_presence(yr,mo,day,sat=sat):
-        fnms = glob(dirData + 'Input/V'+sat+'14IMG/'+stryr+'/'+strdoy(yr,mo,day)+'/V'+sat+'14IMG.A'+stryr+strdoy(yr,mo,day)+'*.nc')
+        fnms = glob(dirData + 'Input/'+sat+'14IMG/'+stryr+'/'+strdoy(yr,mo,day)+'/'+sat+'14IMG.A'+stryr+strdoy(yr,mo,day)+'*.nc')
     else:
         print('No VNP14IMG data found for '+stryr+strdoy(yr,mo,day)+', use VNP14IMG_NRT instead')  
-        fnms = glob(dirData + 'Input/V'+sat+'14IMG_NRT/'+stryr+'/'+strdoy(yr,mo,day)+'/V'+sat+'14IMG_NRT.A'+stryr+strdoy(yr,mo,day)+'*.nc')
+        fnms = glob(dirData + 'Input/'+sat+'14IMG_NRT/'+stryr+'/'+strdoy(yr,mo,day)+'/'+sat+'14IMG_NRT.A'+stryr+strdoy(yr,mo,day)+'*.nc')
 
     # convert image data to daily fire location (DL) data 
     dfFP = pd.DataFrame(columns=['Lon','Lat','FRP','Sample','Confidence','DNFlag'])
@@ -1056,11 +1271,11 @@ def convert_VNP14IMG_to_DL(yr,mo,day,clean=False,sat='NP'):
     dfFP = dfFP.reset_index(drop=True)
 
     # save DL data to VNP14IMGDL
-    dirout = dirData+'Input/V'+sat+'14IMGDL'
+    dirout = dirData+'Input/'+sat+'14IMGDL'
     mkdir(dirout)
-    doy = datetime(yr,mo,day).timetuple().tm_yday
+    doy = datetime.datetime(yr,mo,day).timetuple().tm_yday
     if len(dfFP) > 0:
-        dfFP.to_csv(dirout+'/V'+sat+'14IMGDL_'+str(yr)+str(doy).zfill(3)+'.csv')
+        dfFP.to_csv(dirout+'/'+sat+'14IMGDL_'+str(yr)+str(doy).zfill(3)+'.csv')
 
     # delete VNP14IMG data to save space
     if clean:
@@ -1068,41 +1283,56 @@ def convert_VNP14IMG_to_DL(yr,mo,day,clean=False,sat='NP'):
 
     return dfFP
 
-def make_VNP14IMGDL(yr,mo,day,upd=False,sat='NP'):
+def make_VNP14IMGDL(yr,mo,day,upd=False,sat='VNP',comp=True):
     """ for a day, download VNP14IMG, VJ114IMG, VJ214IMG netcdf and convert to location (DL) data"""
-    from datetime import datetime
     import os
 
     # if VNP14IMGDL data already available and upd is not set to True, skip the creation
-    doy = datetime(yr,mo,day).timetuple().tm_yday
-    fileext = os.path.exists(dirData+'Input/V'+sat+'14IMGDL/V'+sat+'14IMGDL_'+str(yr)+str(doy).zfill(3)+'.csv')
+    doy = datetime.datetime(yr,mo,day).timetuple().tm_yday
+    fileext = os.path.exists(dirData+'Input/'+sat+'14IMGDL/'+sat+'14IMGDL_'+str(yr)+str(doy).zfill(3)+'.csv')
     if fileext & (not upd):
-        print(f'...V{sat}14IMGDL data already exists...')
+        print(f'...{sat}14IMGDL data already exists...')
         return True
 
     # otherwise, download VNPIMG or VNPIMG_NRT data and convert to fire location data
     edl_token = read_earthdata_token() # get the earthdata token
     dlflag = False
-    VNP14IMG_data_complete = checkts_VNP14IMG_daily(edl_token, yr,mo,day, NRT=False, sat=sat)
-    VNP14IMG_NRT_complete = checkts_VNP14IMG_daily(edl_token, yr, mo, day, NRT=True, sat=sat)
-    if VNP14IMG_data_complete: # preferred data source is VNP14IMG in LAADS
-        print("...downloading VNP14IMG data...")
-        dlflag = download_VNP14IMG_daily(edl_token, yr, mo, day, no_if_modified_since=True, NRT=False, sat=sat)  # force redownload by `no_if_modified_since`
-        print("...converting VIIRS data...")
-        convert_VNP14IMG_to_DL(yr, mo, day, clean=False, sat=sat) 
-        dlflag = True
-    elif VNP14IMG_NRT_complete:  # only if VNP14IMG not available, try downloading VNP14IMG_NRT data from LANCE
-        print("...downloading VNP14IMG_NRT data...")
-        dlflag = download_VNP14IMG_daily(edl_token, yr, mo, day, no_if_modified_since=True, NRT=True, sat=sat)
-        print("...converting VIIRS data...")
-        convert_VNP14IMG_to_DL(yr, mo, day, clean=False, sat=sat) 
-        dlflag = True
-
+    
+    if comp:  # only download when the last time step in a day is 2354
+        VNP14IMG_data_complete = checkts_VNP14IMG_daily(edl_token, yr,mo,day, NRT=False, sat=sat)
+        VNP14IMG_NRT_complete = checkts_VNP14IMG_daily(edl_token, yr, mo, day, NRT=True, sat=sat)
+        if VNP14IMG_data_complete: # preferred data source is VNP14IMG in LAADS
+            print("...downloading VNP14IMG data...")
+            dlflag = download_VNP14IMG_daily(edl_token, yr, mo, day, no_if_modified_since=True, NRT=False, sat=sat)  # force redownload by `no_if_modified_since`
+            print("...converting VIIRS data...")
+            convert_VNP14IMG_to_DL(yr, mo, day, clean=False, sat=sat) 
+            dlflag = True
+        elif VNP14IMG_NRT_complete:  # only if VNP14IMG not available, try downloading VNP14IMG_NRT data from LANCE
+            print("...downloading VNP14IMG_NRT data...")
+            dlflag = download_VNP14IMG_daily(edl_token, yr, mo, day, no_if_modified_since=True, NRT=True, sat=sat)
+            print("...converting VIIRS data...")
+            convert_VNP14IMG_to_DL(yr, mo, day, clean=False, sat=sat) 
+            dlflag = True
+    else:  # even the last timestep is not 2354, download the files
+        VNP14IMG_data_empty = checkempty_VNP14IMG_daily(edl_token, yr,mo,day, NRT=False, sat=sat)
+        VNP14IMG_NRT_empty = checkempty_VNP14IMG_daily(edl_token, yr, mo, day, NRT=True, sat=sat)
+        if not VNP14IMG_data_empty: # preferred data source is VNP14IMG in LAADS
+            print("...downloading VNP14IMG data...")
+            dlflag = download_VNP14IMG_daily(edl_token, yr, mo, day, no_if_modified_since=True, NRT=False, sat=sat)  # force redownload by `no_if_modified_since`
+            print("...converting VIIRS data...")
+            convert_VNP14IMG_to_DL(yr, mo, day, clean=False, sat=sat) 
+            dlflag = True
+        elif not VNP14IMG_NRT_empty:  # only if VNP14IMG not available, try downloading VNP14IMG_NRT data from LANCE
+            print("...downloading VNP14IMG_NRT data...")
+            dlflag = download_VNP14IMG_daily(edl_token, yr, mo, day, no_if_modified_since=True, NRT=True, sat=sat)
+            print("...converting VIIRS data...")
+            convert_VNP14IMG_to_DL(yr, mo, day, clean=False, sat=sat) 
+            dlflag = True        
     return dlflag
 
 
 # Step 1: Record VAF at 500m resolution (MODIS 500m sinusoidal grids)
-def readpreprocess_DL(yr,mo,day,IMG=True,sat='NP'):
+def readpreprocess_DL(yr,mo,day,IMG=True,sat='VNP'):
     ''' read and preprocess the VIIRS daily active fire location data
     '''
     # read VIIRS active fire data
@@ -1110,13 +1340,16 @@ def readpreprocess_DL(yr,mo,day,IMG=True,sat='NP'):
         dfFC = read_VNP14IMG_NRT_daily(yr,mo,day,sat=sat)
         dfFC = removestaticpixels(dfFC) # filter out static pixels 
     else:
-        dfFC = read_VNP14IMGML_daily(yr, mo, day)
+        dfFC = read_VNP14IMGML(yr, mo, day=day)
 
     # add major LCT
     dfFC = adddfmjLCT(dfFC)
 
     # add DN flag
     dfFC = addDN(dfFC, NRT=IMG)
+
+    # add sample adjustment weight
+    dfFC = add_wgt_2_VNP(dfFC, mo)
 
     return dfFC
 
@@ -1215,7 +1448,8 @@ def removestaticpixels(df):
 def add_wgt_2_VNP(df, mo):
     """ add wgt column to VNP data
     """
-    import pandas as pd
+    if len(df) == 0:
+        return df
 
     # get dfwgt for the month
     dfwgt = pd.read_csv(dirData+'Input/VIIRSsplwgt_2019-2021.csv',index_col=0)
@@ -1229,47 +1463,48 @@ def add_wgt_2_VNP(df, mo):
 
     return df
 
-def save_VAF_1tile_day(dsFC,yr,mo,day,strhv,sat='NP'):
+def save_VAF_1tile_day(dsFC,yr,mo,day,strhv,sat='VNP'):
     ''' save daily FC (create directory if necessary)
     '''
     import os
-    from datetime import datetime
 
-    dirFC = dirData+'Intermediate/V'+sat+'500m/'+str(yr)
+    dirFC = dirData+'Intermediate/'+sat+'500m/'+str(yr)
 
     # if directory not there, create one
     if not os.path.exists(dirFC):
         os.makedirs(dirFC)
 
     # save data to file
-    doy = datetime(yr,mo,day).timetuple().tm_yday
+    doy = datetime.datetime(yr,mo,day).timetuple().tm_yday
     fnmFC = dirFC+'/FC_'+str(doy).zfill(3)+'_'+strhv+'.nc'    
     to_netcdf(dsFC,fnmFC)
 
-def check_VAF_1tile_day(yr,mo,day,strhv,sat='NP'):
+def check_VAF_1tile_day(yr,mo,day,strhv,sat='VNP'):
     ''' check if daily FC data file exists
     '''
-    from datetime import datetime
     import os
 
-    dirFC = dirData+'Intermediate/V'+sat+'500m/'+str(yr)
+    dirFC = dirData+'Intermediate/'+sat+'500m/'+str(yr)
 
     # if directory not there, create one
     if not os.path.exists(dirFC):
         os.makedirs(dirFC)
 
     # save data to file
-    doy = datetime(yr,mo,day).timetuple().tm_yday
+    doy = datetime.datetime(yr,mo,day).timetuple().tm_yday
     fnmFC = dirFC+'/FC_'+str(doy).zfill(3)+'_'+strhv+'.nc'    
 
     return os.path.exists(fnmFC)
 
-def cal_VAF_1tile_1day(dfFC,vh,vv,yr,mo,day,sat='NP'):
+def cal_VAF_1tile_1day(dfFC,vh,vv,yr,mo,day,sat='VNP',processor=None):
     ''' record and save 1 tile 1day VAF data to MODIS-500m grid cells
     '''    
     # define parameters of the tile
-    strhv,xs,ys,MODgt,bb = get_tile_paras(vh,vv)
-
+    if processor is None:
+        strhv,xs,ys,MODgt,bb = get_tile_paras(vh,vv)
+    else:
+        strhv, xs, ys, MODgt, bb = processor.get_tile_paras(vh, vv)
+        
     # filter VIIRS active fire data using the bounding box of the tile
     dfFC_sub = filter_VNP14IMGML_NRT(dfFC,latlon=bb)
 
@@ -1285,27 +1520,30 @@ def cal_VAF_1tile_1day(dfFC,vh,vv,yr,mo,day,sat='NP'):
             # save FC (create directory if necessary)
             save_VAF_1tile_day(dsFC,yr,mo,day,strhv,sat=sat)
 
-def recordVAF500m(yr,mo,day,dfFC, vhs=[0,35],vvs=[0,17],sat='NP'):
-    ''' wrapper to record global (all tiles, single day) VIIRS (C1) active fire (VAF) data to MODIS-500m resolution
+def recordVAF500m(dfFC, yr,mo,day=None, vhs=[0,35],vvs=[0,17],sat='VNP', processor = None):
+    ''' wrapper to record global (all tiles, single day or month) VIIRS (C1) active fire (VAF) data to MODIS-500m resolution
     '''
     # loop over all tiles and record VAF data
     if len(dfFC) > 0:
-        # add sample adjustment weight
-        dfFC = add_wgt_2_VNP(dfFC, mo)
+        # # add sample adjustment weight
+        # dfFC = add_wgt_2_VNP(dfFC, mo)
 
         for vh in range(vhs[0],vhs[1]+1):
             for vv in range(vvs[0],vvs[1]+1):
                 # print(f'Processing tile h{vh}v{vv}...')
                 strhv = 'h'+str(vh).zfill(2)+'v'+str(vv).zfill(2)
                 if not check_VAF_1tile_day(yr,mo,day,strhv,sat=sat):  # if file exist, skip
-                    cal_VAF_1tile_1day(dfFC,vh,vv,yr,mo,day,sat=sat)
+                    cal_VAF_1tile_1day(dfFC,vh,vv,yr,mo,day,sat=sat, processor = processor)
     else:
-        print('No data available for ', yr, mo, day)
+        if day is None:
+            print('No data available for ', yr, mo)
+        else:
+            print('No data available for ', yr, mo, day)
     
     return len(dfFC)
 
 # Step 2: Record VAF sums (GBA groups format) at 0.25deg resolution
-def getVAFnc_day(yr,mo,day,vh,vv,sat='NP'):
+def getVAFnc_day(yr,mo,day,vh,vv,sat='VNP'):
     ''' Read daily 500-m VAF from a precalculated netcdf file
 
     Parameters
@@ -1326,13 +1564,13 @@ def getVAFnc_day(yr,mo,day,vh,vv,sat='NP'):
     '''
     import xarray as xr
     import os
-    from datetime import datetime
+
 
     strhv = 'h'+str(vh).zfill(2)+'v'+str(vv).zfill(2)
 
-    dirFC = dirData+'Intermediate/V'+sat+'500m/'+str(yr) 
+    dirFC = dirData+'Intermediate/'+sat+'500m/'+str(yr) 
 
-    doy = datetime(yr,mo,day).timetuple().tm_yday
+    doy = datetime.datetime(yr,mo,day).timetuple().tm_yday
     fnmFC = dirFC+'/FC_'+str(doy).zfill(3)+'_'+strhv+'.nc'    
 
     if os.path.exists(fnmFC):
@@ -1375,7 +1613,7 @@ def caladd_bin_number_latlon(VAF,Tlon,Tlat,res=0.25):
         dfsize = df.groupby(['ilon','ilat']).sum()['iVAF']
         return dfsize
         
-def cal_VAFp25_1tile_1day(yr,mo,day,vh,vv,sat='NP'):
+def cal_VAFp25_1tile_1day(yr,mo,day,vh,vv,sat='VNP'):
     ''' Record the VAF data to 0.25 degree grids for a 10x10 deg tile in a day.
 
     Parameters
@@ -1603,9 +1841,7 @@ def doVAFadjust_daily(dsAF_day, dsbAF_day, month):
 
     return dsAF_day_new, dsbAF_day_new
 
-
-
-def cal_VAFp25_alltiles_1day(yr,mo,day,vhs=[0,35],vvs=[0,17],sat='NP'):
+def cal_VAFp25_alltiles_1day(yr,mo,day,vhs=[0,35],vvs=[0,17],sat='VNP'):
     '''
     record VIIRS active fire counts (classified) for each 0.25 degree (GBA format).
 
@@ -1647,9 +1883,9 @@ def cal_VAFp25_alltiles_1day(yr,mo,day,vhs=[0,35],vvs=[0,17],sat='NP'):
 
     return ds_VAF_types, ds_VAF_bioms
 
-def sav_VAFp25_alltiles_1day(ds_VAF_types,ds_VAF_bioms,yr,mo,day,satdir='VAF'):
+def sav_VAFp25_alltiles_1day(ds_VAF_types,ds_VAF_bioms,yr,mo,day,sat='VNP'):
     # save to netcdf
-    dirout = dirData+'Intermediate/'+satdir+'/'+str(yr)
+    dirout = dirData+'Intermediate/'+sat+'AF/'+str(yr)
     mkdir(dirout)
     fnmout = dirout+'/VAF_'+str(yr)+'-'+str(mo).zfill(2)+'-'+str(day).zfill(2)+'.nc'
     if os.path.isfile(fnmout):
@@ -1717,12 +1953,12 @@ def mapGFEDregdata(dfdata, daGFED, GFEDnms):
     
     return dadata
 
-def read_VAFp25_alltiles_1day(yr, mo, day, satdir='VAF'):
+def read_VAFp25_alltiles_1day(yr, mo, day, sat='VNP'):
     """ read daily VIIRS AF data at 0.25 deg
     """
     import xarray as xr 
 
-    fnmVAF = dirData+'Intermediate/'+satdir+'/'+str(yr)+'/VAF_'+strymd(yr,mo,day)+'.nc'
+    fnmVAF = dirData+'Intermediate/'+sat+'AF/'+str(yr)+'/VAF_'+strymd(yr,mo,day)+'.nc'
     ds = xr.open_dataset(fnmVAF,group='MOD_CMG025/VAF')
     dsb = xr.open_dataset(fnmVAF,group='MOD_CMG025/VAF_biomes')
     ds_coord = xr.open_dataset(fnmVAF,group='MOD_CMG025')
@@ -1792,7 +2028,7 @@ def remapBAclass(dsp25,damaskp25TropFor, damaskp25TempFor, damaskp25Other, FTC01
 
     return daBA_16class_yr
 
-def cal_BA_scled_day(yr, mo, day,satdir = 'VAF'):
+def cal_BA_scled_day(yr, mo, day,sat = 'VNP'):
     """ Use EFA scalars to convet daily VIIRs active fire counts to BA; convert to G16 format and save to netcdf
     """
     import xarray as xr
@@ -1802,7 +2038,7 @@ def cal_BA_scled_day(yr, mo, day,satdir = 'VAF'):
     daGFED = read_GFEDmask()
 
     # read daily VIIRS AF data (0.25 deg, GBA format)
-    dsAF_yr, dsbAF_yr = read_VAFp25_alltiles_1day(yr, mo, day, satdir=satdir)
+    dsAF_yr, dsbAF_yr = read_VAFp25_alltiles_1day(yr, mo, day, sat=sat)
 
     # read presaved AFA tables (GBA format)
     dfVFA = read_VFA()
@@ -1859,7 +2095,7 @@ def cal_BA_scled_day(yr, mo, day,satdir = 'VAF'):
     # save 16-class BA data
     dirout = dirData+'Intermediate/BA/'+str(yr)
     mkdir(dirout)
-    fnmout = dirout+'/BA_'+strymd(yr,mo,day)+'.nc'
+    fnmout = dirout+'/BA_'+sat+'_'+strymd(yr,mo,day)+'.nc'
     to_netcdf(ds_16class_yr, fnmout)
 
 # Step 4: Use pre-calculated scalar to convert BA sums to EM sums (G16 format)
@@ -1906,14 +2142,14 @@ def read_FC():
     dfFC = pd.read_csv(dirData + 'Input/GFED51FC_regtp.csv',index_col=0)
     return dfFC
 
-def cal_EM_scled_day(yr, mo, day):
+def cal_EM_scled_day(yr, mo, day, sat='VNP'):
     """ Use FC scalars to convet daily VIIRS BA to EM; keep G16 format and save to netcdf
     """
     import xarray as xr 
     import numpy as np
 
     # read annual GFED5.1 original BA (km2) or GFED5.1 BAfromVAF (km2)
-    dsBA_16class = read_BA(yr, mo, day)
+    dsBA_16class = read_BA(yr, mo, day, sat=sat)
     if dsBA_16class is None:
         return
     daBA_16class = dsBA_16class.BA
@@ -1948,13 +2184,12 @@ def cal_EM_scled_day(yr, mo, day):
     # save output
     dirout = dirData+'Intermediate/EM/'+str(yr)
     mkdir(dirout)
-    fnmout = dirout+'/EM_'+strymd(yr,mo,day)+'.nc'
+    fnmout = dirout+'/EM_'+sat+'_'+strymd(yr,mo,day)+'.nc'
     to_netcdf(ds_16class_yr, fnmout)
 
 # Step 5: Derive GFED5eNRTeco (16-class combined data VAF + BA + EM)
 def add_GFED5eco_attrs(ds):
-    from datetime import datetime
-    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
     ds.attrs['long_name'] = 'Global Fire Emissions Database v5eNRT ecosystem'
     ds.attrs['standard_name'] = 'GFED5eNRTeco'
@@ -2000,7 +2235,7 @@ def add_VAF_attrs(ds):
     ds.VAF.attrs['unit'] = "#/day"
     return ds 
 
-def getVAF16class(yr,mo,day,satdir='VNPAF'):
+def getVAF16class(yr,mo,day,sat='VNP'):
     """ convert the original GFED5.1 BA dataset (biom + type, in km2) to the GFED5.1 16-class dataarray (in m2)
 
     - The input dataset `dsp25` is read from dsp25 = xr.open_mfdataset(dirGFED51BA+'BA'+str(yr)+'??.nc').load()
@@ -2010,7 +2245,7 @@ def getVAF16class(yr,mo,day,satdir='VNPAF'):
     import xarray as xr
 
     # read daily VIIRS AF data (0.25 deg, GBA-2groups format)
-    dsAF_yr, dsbAF_yr = read_VAFp25_alltiles_1day(yr, mo, day, satdir=satdir)
+    dsAF_yr, dsbAF_yr = read_VAFp25_alltiles_1day(yr, mo, day, sat=sat)
 
     # convert VAF from GBA-2groups to GBA format
     t = np.datetime64(strymd(yr,mo,day))
@@ -2079,14 +2314,14 @@ def getVAF16class(yr,mo,day,satdir='VNPAF'):
 
     return daVAF_16class
 
-def make_GFED5eco(yr,mo,day, satdir='VNPAF'):
+def make_GFED5eco(yr,mo,day, sat='VNP'):
     """ createt GFED5e ecosystem 16-class data, which contains three layers
      - VAF: VIIRS active fire counts
      - BA: burned area
      - EM: emissions
     """
     # read 16-class BA data as the base
-    ds_combined = read_BA(yr, mo, day)
+    ds_combined = read_BA(yr, mo, day, sat=sat)
 
     # add global attributes
     ds_combined = add_GFED5eco_attrs(ds_combined)
@@ -2095,14 +2330,14 @@ def make_GFED5eco(yr,mo,day, satdir='VNPAF'):
     ds_combined = add_BA_attrs(ds_combined)
 
     # read 16-class EM data and add to ds_combined
-    dsEM_16class = read_EM(yr, mo, day)
+    dsEM_16class = read_EM(yr, mo, day, sat=sat)
     ds_combined['EM'] = dsEM_16class['EM']
 
     # add EM attributes
     ds_combined = add_EM_attrs(ds_combined)
 
     # read GBA VAF data
-    daVAF_16class = getVAF16class(yr,mo,day,satdir=satdir)
+    daVAF_16class = getVAF16class(yr,mo,day,sat=sat)
     ds_combined['VAF'] = daVAF_16class
 
     # add VAF attributes
@@ -2111,15 +2346,10 @@ def make_GFED5eco(yr,mo,day, satdir='VNPAF'):
     # save output
     dirout = dirData+'Output/'+str(yr)
     mkdir(dirout)
-    fnmout = dirout+'/GFED5eNRTeco_'+strymd(yr,mo,day)+'.nc'
+    fnmout = dirout+'/GFED5eNRTeco_'+sat+'_'+strymd(yr,mo,day)+'.nc'
     to_netcdf(ds_combined, fnmout)
     
-    # upload data to WUR server
-    try:
-        sftp_upload(userconfig.ftpurl_WUR, userconfig.ftpun_WUR, userconfig.ftppw_WUR,
-            fnmout, remote_dir=userconfig.ftpdir_WUR, ftpport=userconfig.ftpport_WUR)
-    except:
-        print('The uploading of GFED5eNRTspe to WUR ftp server is unsuccessful')
+    return fnmout 
 
 # Step 6: Derive GFED5eNRTspe (species emissions
 def map16to6(EM16):
@@ -2155,8 +2385,7 @@ def map16to6(EM16):
     return EM6.transpose('ftype', 'time', 'lat', 'lon').sortby('lat', ascending=True)
 
 def add_GFED5spe_attrs(ds):
-    from datetime import datetime
-    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
     ds.attrs['long_name'] = 'Global Fire Emissions Database v5eNRT species emissions'
     ds.attrs['standard_name'] = 'GFED5eNRTspe'
@@ -2183,12 +2412,12 @@ def add_GFED5spe_attrs(ds):
 
     return ds
 
-def make_EMspecies(yr,mo,day):
+def make_EMspecies(yr,mo,day,sat='VNP'):
     """ save 6-class EM files
     """
 
     # read emission data from GFED5eNRT ecosystem
-    EM16 = read_GFED5eco(yr,mo,day).EM 
+    EM16 = read_GFED5eco(yr,mo,day,sat=sat).EM 
 
     # map EM to 6-classes
     EM6 = map16to6(EM16)
@@ -2217,17 +2446,11 @@ def make_EMspecies(yr,mo,day):
     # save output (only the sum emissions)
     dirout = dirData+'Output/'+str(yr)
     mkdir(dirout)
-    fnmout = dirout+'/GFED5eNRTspe_'+strymd(yr,mo,day)+'.nc'
+    fnmout = dirout+'/GFED5eNRTspe_'+sat+'_'+strymd(yr,mo,day)+'.nc'
     to_netcdf(ds_EM6_species_sum, fnmout)
 
-    # upload data to WUR server
-    try:
-        sftp_upload(userconfig.ftpurl_WUR, userconfig.ftpun_WUR, userconfig.ftppw_WUR,
-            fnmout, remote_dir=userconfig.ftpdir_WUR, ftpport=userconfig.ftpport_WUR)
-    except:
-        print('The uploading of GFED5eNRTspe to WUR ftp server is unsuccessful')
-        
-    return ds_EM6_species
+    return fnmout
+
 
 # Optional steps : Use cloud fraction to scale the BA or EM (currently not used)
 def doCFscl(da, daCF):
@@ -2245,10 +2468,10 @@ def doCFscl(da, daCF):
     return da_scl
 
 # ----------------------------------------------------------------------------------------------------
-# Creating figures showing daily and cumulative regional sum (in comparison to climatological data)
+# GFEDextNRT visualization functions
 # ----------------------------------------------------------------------------------------------------
 
-def readGFED5eco(yr, mo=None, day=None, vnm='EM'):
+def readGFED5eco(yr, mo=None, day=None, vnm='EM', sat=None):
     """
     Load a variable from GFED5.1 NRT NetCDF files for a specified year, month, and/or day.
 
@@ -2284,14 +2507,22 @@ def readGFED5eco(yr, mo=None, day=None, vnm='EM'):
     import xarray as xr
     from glob import glob
 
+    if sat is None:
+        fnmhead = dirData + 'Output/' + str(yr) + '/GFED5eNRTeco_'
+    else:
+        fnmhead = dirData + 'Output/' + str(yr) + '/GFED5eNRTeco_' + sat + '_'
+
     if day is not None:
-        fnm = dirData + 'Output/' + str(yr) + '/GFED5eNRTeco_' + str(yr) + '-' + str(mo).zfill(2) + '-' + str(day).zfill(2) + '.nc'
-        ds = xr.open_dataset(fnm)
+        fnm = fnmhead + str(yr) + '-' + str(mo).zfill(2) + '-' + str(day).zfill(2) + '.nc'
+        if os.path.exists(fnm):
+            ds = xr.open_dataset(fnm)
+        else:
+            return None
     elif mo is not None:
-        fnms = glob(dirData + 'Output/' + str(yr) + '/GFED5eNRTeco_' + str(yr) + '-' + str(mo).zfill(2) + '-*.nc')
+        fnms = glob(fnmhead + str(yr) + '-' + str(mo).zfill(2) + '-*.nc')
         ds = xr.open_mfdataset(fnms)
     else:
-        fnms = glob(dirData + 'Output/' + str(yr) + '/GFED5eNRTeco_' + str(yr) + '-*.nc')
+        fnms = glob(fnmhead + str(yr) + '-*.nc')
         ds = xr.open_mfdataset(fnms)
 
     da = ds[vnm]
@@ -2326,7 +2557,6 @@ def readcumudata(yr, vnm='EM'):
 
 def doGFEDregsum(da,yr,mo, day):
     import pandas as pd
-    import datetime
     
     daGFED = read_GFEDmask()
     
@@ -2436,6 +2666,33 @@ def monthly_to_yearly_dayofyear_mean(monthly_series):
     df_dayofyear_mean = pd.DataFrame(yearly_data)
     return df_dayofyear_mean
 
+def make_daily_emissions_table_yr(yr):
+    varnm = 'EM'
+    sat = 'CMB'
+    ds_fires = xr.open_mfdataset(dirData+'Output/'+str(yr)+'/GFED5eNRTeco_'+sat+'_????-??-??.nc')
+    da = ds_fires[varnm].sum(dim='lct') 
+
+    # calculate mask 
+    daGFED = read_GFEDmask()
+
+    # calculate total CO emissions (in grams/day) in a region 
+    print('Processing global sum...')
+    ts = da.sum(dim=['lat','lon']).compute().to_pandas().to_frame(name="Globe")
+    GFEDnms = ['OCEA', 'BONA', 'TENA', 'CEAM', 'NHSA', 'SHSA', 'EURO', 'MIDE', 'NHAF', 'SHAF', 'BOAS', 'CEAS', 'SEAS', 'EQAS', 'AUST']
+    for GFEDreg in range(1,15):
+        print(f'Processing region {GFEDreg}...')
+        masked_data = da.where(daGFED == GFEDreg, drop=False)
+        regnm = GFEDnms[GFEDreg]
+        ts[regnm] = masked_data.sum(dim=['lat','lon']).compute().to_pandas()
+
+    ts.index = ts.index.dayofyear
+    ts.index.name = 'Day_of_Year'
+    
+    # save to csv
+    outfile = dirData + 'Input/DailyRegionalSum/daily_emissions_table_'+str(yr)+'.csv'
+    ts.to_csv(outfile)
+    
+
 def pltEMfig(df_updated,cumu=False):
     import matplotlib.pyplot as plt
     import matplotlib
@@ -2445,7 +2702,8 @@ def pltEMfig(df_updated,cumu=False):
     matplotlib.use('Agg')  # Non-interactive backend for PNG/PDF output, which is needed for some servers
 
     lastdate = df_updated.index[-1]
-    currentyear = int(lastdate[0:4])
+    currentyear = lastdate.year
+    # currentyear = int(lastdate[0:4])
 
    # calculate global sum from climatology data
     dfmean = pd.read_csv(os.path.join(dirData, 'Input/DailyRegionalSum/daily_emissions_table_means_2002-2022.csv'),index_col=0)
@@ -2489,14 +2747,14 @@ def pltEMfig(df_updated,cumu=False):
         axs[i].set_ylim(0, None)
 
     if cumu:
-        red_patch = mlines.Line2D([],[],color='red', label='2025')
-        orange_patch = mlines.Line2D([],[],color='#f56f42', label='2024')
-        yellow_patch = mlines.Line2D([],[],color='#faa302', label='2023')
+        red_patch = mlines.Line2D([],[],color='red', label=str(currentyear))
+        orange_patch = mlines.Line2D([],[],color='#f56f42', label=str(currentyear-1))
+        yellow_patch = mlines.Line2D([],[],color='#faa302', label=str(currentyear-2))
         gray_patch = mlines.Line2D([],[],color='0.6', label='2002-2022')
         _=fig.legend(loc='upper left', ncol=2, fontsize=10, bbox_to_anchor=(0.01,0.99), frameon=False,
                         handles=[red_patch,orange_patch,yellow_patch,gray_patch])
     else:
-        red_patch = mlines.Line2D([],[],color='red', label='2025')
+        red_patch = mlines.Line2D([],[],color='red', label=str(currentyear))
         black_patch = mlines.Line2D([],[],color='k', label='2002-2022 mean')
         gray_patch = mpatches.Patch(color=c_other, alpha=0.3, label='2002-2022 range')
         _=fig.legend(loc='upper left', ncol=2, fontsize=10, bbox_to_anchor=(0.01,0.99), frameon=False,
@@ -2509,7 +2767,7 @@ def pltEMfig(df_updated,cumu=False):
     
     return fig
 
-def updatetsdata(yr, mo, day, vnm='EM'):
+def updatetsdata(yr, mo, day, vnm='EM', sat=None):
     """
     Update the cumulative emissions data by appending daily emission sums
     from the day after the last saved date up to the specified target date.
@@ -2530,17 +2788,19 @@ def updatetsdata(yr, mo, day, vnm='EM'):
     df : pandas.DataFrame
         Updated cumulative emissions DataFrame.
     """
-    from datetime import timedelta, date
     
     # Load existing cumulative emissions data
     df = readcumudata(yr, vnm=vnm)
 
     # Safely parse the last date in the index to a datetime.date object
-    last_date_str = df.index.max()
-    last_date = pd.to_datetime(last_date_str).date()
+    if df is None:
+        last_date = datetime.date(yr, 1, 1) - datetime.timedelta(days=1)  # set to day before Jan 1 of target year
+    else:
+        last_date_str = df.index.max()
+        last_date = pd.to_datetime(last_date_str).date()
 
     # Define the target end date
-    target_date = date(yr, mo, day)
+    target_date = datetime.date(yr, mo, day)
 
     # If data is already current, return unchanged
     if last_date >= target_date:
@@ -2548,21 +2808,22 @@ def updatetsdata(yr, mo, day, vnm='EM'):
         return df
 
     # Loop from the day after last_date up to and including target_date
-    current_date = last_date + timedelta(days=1)
+    current_date = last_date + datetime.timedelta(days=1)
     while current_date <= target_date:
         print(f"Processing data for {current_date.isoformat()}...")
 
         # Read daily emissions
-        da = readGFED5eco(current_date.year, mo=current_date.month, day=current_date.day, vnm=vnm)
+        da = readGFED5eco(current_date.year, mo=current_date.month, day=current_date.day, vnm=vnm, sat=sat)
 
         # Aggregate daily emissions data
-        df_day = doGFEDregsum(da, current_date.year, current_date.month, current_date.day)
+        if da is not None:
+            df_day = doGFEDregsum(da, current_date.year, current_date.month, current_date.day)
 
-        # Update cumulative DataFrame
-        df = updateGFEDregsum(df, df_day, current_date.year, vnm)
+            # Update cumulative DataFrame
+            df = updateGFEDregsum(df, df_day, current_date.year, vnm)
 
         # Move to next day
-        current_date += timedelta(days=1)
+        current_date += datetime.timedelta(days=1)
 
     return df
 
@@ -2585,35 +2846,41 @@ def generatetsfig(yr, vnm, df_updated=None):
     figdaily.savefig(fnmdaily)
     figcumu.savefig(fnmcumu)
 
+    return fnmdaily, fnmcumu
+
+def uploadtsfigs(fnmdaily, fnmcumu, UCI=True, WUR=True):
     # upload figures to UCI sftp server
-    sftp_upload(userconfig.ftpurl_UCI, userconfig.ftpun_UCI, userconfig.ftppw_UCI,
-        fnmdaily, remote_dir=userconfig.ftpdir_UCI, ftpport=userconfig.ftpport_UCI)    
-    sftp_upload(userconfig.ftpurl_UCI, userconfig.ftpun_UCI, userconfig.ftppw_UCI,
-        fnmcumu, remote_dir=userconfig.ftpdir_UCI, ftpport=userconfig.ftpport_UCI)
+    if UCI:
+        sftp_upload(userconfig.ftpurl_UCI, userconfig.ftpun_UCI, userconfig.ftppw_UCI,
+            fnmdaily, remote_dir=userconfig.ftpdir_UCI, ftpport=userconfig.ftpport_UCI)    
+        sftp_upload(userconfig.ftpurl_UCI, userconfig.ftpun_UCI, userconfig.ftppw_UCI,
+            fnmcumu, remote_dir=userconfig.ftpdir_UCI, ftpport=userconfig.ftpport_UCI)
     
     # upload figures to WUR sftp server
-    sftp_upload(userconfig.ftpurl_WUR, userconfig.ftpun_WUR, userconfig.ftppw_WUR,
-        fnmdaily, remote_dir=userconfig.ftpdir_WUR, ftpport=userconfig.ftpport_WUR)    
-    sftp_upload(userconfig.ftpurl_WUR, userconfig.ftpun_WUR, userconfig.ftppw_WUR,
-        fnmcumu, remote_dir=userconfig.ftpdir_WUR, ftpport=userconfig.ftpport_WUR)
+    if WUR:
+        sftp_upload(userconfig.ftpurl_WUR, userconfig.ftpun_WUR, userconfig.ftppw_WUR,
+            fnmdaily, remote_dir=userconfig.ftpdir_WUR, ftpport=userconfig.ftpport_WUR)    
+        sftp_upload(userconfig.ftpurl_WUR, userconfig.ftpun_WUR, userconfig.ftppw_WUR,
+            fnmcumu, remote_dir=userconfig.ftpdir_WUR, ftpport=userconfig.ftpport_WUR)
     
-def update_to_now_figs(vnm='EM', genfig=True):
-
-    from datetime import datetime
-
+def update_to_now_figs(vnm='EM', genfig=True, uplfig=True, date_now=None):
+    # The figure from CMB is produced
+    
     # Get the latest GFED5eNRT date
-    date_now = datetime.now().date()
+    if date_now is None:
+        date_now = datetime.datetime.now().date()
     date_GFED5 = get_GFED5_lastday(date_now.year)
     
     # update the cumulative data
-    _ = updatetsdata(date_GFED5.year, date_GFED5.month, date_GFED5.day, vnm=vnm)
+    _ = updatetsdata(date_GFED5.year, date_GFED5.month, date_GFED5.day, vnm=vnm, sat='CMB')
 
     # generate the updated cumulative figure
     if genfig:
-        generatetsfig(date_GFED5.year, vnm)
+        fnmdaily, fnmcumu = generatetsfig(date_now.year, vnm)
+        if uplfig:
+            uploadtsfigs(fnmdaily, fnmcumu, UCI=True, WUR=True)
     
-
-# Optional step : Convert GFED5eNRT from daily to monthly
+# Optional step : Convert GFED5eNRT from daily to monthly (may be deleted later)
 def readGFED51NRT(yr,mo=None,day=None,vnm='EM'):
     """
     Read GFED5.1 NRT data for a given year, month, and day.
@@ -2740,11 +3007,10 @@ def make_monthlytable_yr(yr,vnm='EM'):
     df.to_csv(outfile)
 
 # ----------------------------------------------------------------------------------------------------
-# Bulk run functions
+# GFEDextNRT bulk run functions
 # ----------------------------------------------------------------------------------------------------
 
-# NRT operational run functions
-def run_1day(yr, mo, day, IMG=True, upd=False, sat='NP'):
+def run_1day(yr, mo, day, IMG=True, upd=False, sat='VNP'):
     """Generates GFED5eNRT data for a single day.
 
     This function converts Visible Infrared Imaging Radiometer Suite (VIIRS) Active Fire
@@ -2784,100 +3050,27 @@ def run_1day(yr, mo, day, IMG=True, upd=False, sat='NP'):
     dfFC = readpreprocess_DL(yr, mo, day, IMG=IMG, sat=sat)
 
     print("...recording VIIRS active fires in each 500m grid...")
-    nVAFC = recordVAF500m(yr, mo, day, dfFC, sat=sat)
+    processor = MODISTileProcessor()
+    nVAFC = recordVAF500m(dfFC, yr, mo, day=day, sat=sat, processor=processor)
 
     print("...recording VIIRS active fires in each 0.25deg grid...")
     if nVAFC > 0:
         ds_VAF_types,ds_VAF_bioms = cal_VAFp25_alltiles_1day(yr, mo, day, sat=sat)
-        sav_VAFp25_alltiles_1day(ds_VAF_types,ds_VAF_bioms,yr,mo,day,satdir='V'+sat+'AF')
+        sav_VAFp25_alltiles_1day(ds_VAF_types,ds_VAF_bioms,yr,mo,day,sat=sat)
 
         print("...calculating scaled BA for each 0.25deg grid...")
-        cal_BA_scled_day(yr, mo, day, satdir='V'+sat+'AF')
+        cal_BA_scled_day(yr, mo, day, sat=sat)
         print("...calculating scaled EM for each 0.25deg grid...")
-        cal_EM_scled_day(yr, mo, day)
+        cal_EM_scled_day(yr, mo, day, sat=sat)
 
         print("...generating GFED5eNRTeco (16-class combined VAF, BA, EM) data...")
-        make_GFED5eco(yr, mo, day,satdir='V'+sat+'AF')
+        fnmeco = make_GFED5eco(yr, mo, day,sat=sat)
+        upload_file_WUR(fnmeco)
 
         print("...generating GFED5eNRTspe (all-species EM data)...")
-        make_EMspecies(yr, mo, day)
-    
-    else:
-        print(f"No active fires were detected by VIIRS for {yr}-{mo}-{day}")
+        fnmspe = make_EMspecies(yr, mo, day,sat=sat)
+        upload_file_WUR(fnmspe)
 
-def run_1day_3satNRT(yr, mo, day, upd=False):
-    """ similar to run_1day, but using all available VIIRS on SNPP, NOAA20, NOAA21"""
-    print(f"Running for {yr}-{mo}-{day}")
-
-    print("...downloading data from NASA server and creating fire location data...")
-    dlflag_NP = make_VNP14IMGDL(yr, mo, day, upd=upd, sat='NP')
-    dlflag_J1 = make_VNP14IMGDL(yr, mo, day, upd=upd, sat='J1')
-    dlflag_J2 = make_VNP14IMGDL(yr, mo, day, upd=upd, sat='J2')
-    if not (dlflag_NP+dlflag_J1+dlflag_J2):
-        print(f"Warning: No data available for {yr}-{mo}-{day}.")
-        return
-    
-    print("...calculating 500m VIIRS active fires...")
-    ds_VAF_types_all, ds_VAF_bioms_all = None, None
-    nVAFC = 0 # number of valid VIIRS data sources 
-    if dlflag_NP:
-        print("...reading and preprocessing VNP14 active fire location data...")
-        dfFC_NP = readpreprocess_DL(yr, mo, day, IMG=True, sat='NP')
-        print("...recording VNP14 active fires in each 500m grid...")
-        nVAFC_NP = recordVAF500m(yr, mo, day, dfFC_NP, sat='NP')
-        if nVAFC_NP>0: 
-            ds_VAF_types_NP,ds_VAF_bioms_NP = cal_VAFp25_alltiles_1day(yr, mo, day, sat='NP')
-            nVAFC += 1
-            if ds_VAF_types_all is None:
-                ds_VAF_types_all = ds_VAF_types_NP
-                ds_VAF_bioms_all = ds_VAF_bioms_NP
-    if dlflag_J1:
-        print("...reading and preprocessing VJ114 active fire location data...")
-        dfFC_J1 = readpreprocess_DL(yr, mo, day, IMG=True, sat='J1')
-        print("...recording VJ114 active fires in each 500m grid...")
-        nVAFC_J1 = recordVAF500m(yr, mo, day, dfFC_J1, sat='J1')
-        if nVAFC_J1>0: 
-            ds_VAF_types_J1,ds_VAF_bioms_J1 = cal_VAFp25_alltiles_1day(yr, mo, day, sat='J1')
-            nVAFC += 1
-            if ds_VAF_types_all is None:
-                ds_VAF_types_all = ds_VAF_types_J1
-                ds_VAF_bioms_all = ds_VAF_bioms_J1
-            else:
-                ds_VAF_types_all += ds_VAF_types_J1
-                ds_VAF_bioms_all += ds_VAF_bioms_J1                
-    if dlflag_J2:
-        print("...reading and preprocessing VJ214 active fire location data...")
-        dfFC_J2 = readpreprocess_DL(yr, mo, day, IMG=True, sat='J2')
-        print("...recording VJ214 active fires in each 500m grid...")
-        nVAFC_J2 = recordVAF500m(yr, mo, day, dfFC_J2, sat='J2')
-        if nVAFC_J2>0: 
-            ds_VAF_types_J2,ds_VAF_bioms_J2 = cal_VAFp25_alltiles_1day(yr, mo, day, sat='J2')
-            nVAFC += 1
-            if ds_VAF_types_all is None:
-                ds_VAF_types_all = ds_VAF_types_J2
-                ds_VAF_bioms_all = ds_VAF_bioms_J2
-            else:
-                ds_VAF_types_all += ds_VAF_types_J2
-                ds_VAF_bioms_all += ds_VAF_bioms_J2    
-
-    print("...recording VIIRS active fires in each 0.25deg grid...")
-    if nVAFC > 0:
-        # use the mean VAF data from different available satellites
-        ds_VAF_types = ds_VAF_types_all/nVAFC
-        ds_VAF_bioms = ds_VAF_bioms_all/nVAFC
-        sav_VAFp25_alltiles_1day(ds_VAF_types,ds_VAF_bioms,yr,mo,day,satdir='VAF')
-
-        print("...calculating scaled BA for each 0.25deg grid...")
-        cal_BA_scled_day(yr, mo, day, satdir='VAF')
-        print("...calculating scaled EM for each 0.25deg grid...")
-        cal_EM_scled_day(yr, mo, day)
-
-        print("...generating GFED5eNRTeco (16-class combined VAF, BA, EM) data...")
-        make_GFED5eco(yr, mo, day,satdir='VAF')
-
-        print("...generating GFED5eNRTspe (all-species EM data)...")
-        make_EMspecies(yr, mo, day)
-    
     else:
         print(f"No active fires were detected by VIIRS for {yr}-{mo}-{day}")
 
@@ -2892,7 +3085,6 @@ def get_GFED5_lastday(yr):
                                otherwise None.
     """
     import os
-    from datetime import datetime,date
     from glob import glob
         
     # Construct the directory path for the specified data type
@@ -2904,20 +3096,20 @@ def get_GFED5_lastday(yr):
 
     if not files:
         print(f"Starting from the start of {yr}")
-        return date(yr-1, 12, 31) # No matching files found
+        return datetime.date(yr-1, 12, 31) # No matching files found
 
     # Extract dates from file names.
     dates = []
     for file in files:
         try:
-            dates.append(datetime.strptime(file[-13:-3], '%Y-%m-%d').date())
+            dates.append(datetime.datetime.strptime(file[-13:-3], '%Y-%m-%d').date())
         except ValueError:
             # Skip files that don't match the expected naming convention
             continue
 
     if not dates:
         print(f"Starting from the start of {yr}")
-        return date(yr-1, 12, 31) # No valid dates extracted from filenames
+        return datetime.date(yr-1, 12, 31) # No valid dates extracted from filenames
 
     # Find and return the latest date
     latest_date = max(dates)
@@ -2929,11 +3121,30 @@ def clean_files_year(year):
     delete_subdirs_and_files(dirData+'Input/VNP14IMG_NRT/'+str(year))
     delete_subdirs_and_files(dirData+'Input/VJ114IMG/'+str(year))
     delete_subdirs_and_files(dirData+'Input/VJ114IMG_NRT/'+str(year))
-    delete_subdirs_and_files(dirData+'Input/VJ214IMG/'+str(year))
-    delete_subdirs_and_files(dirData+'Input/VJ214IMG_NRT/'+str(year))
     delete_subdirs_and_files(dirData+'Intermediate/VNP500m/'+str(year))
     delete_subdirs_and_files(dirData+'Intermediate/VJ1500m/'+str(year))
-    delete_subdirs_and_files(dirData+'Intermediate/VJ2500m/'+str(year))
+
+def combineVNPVJ1_1day(yr,mo,day):
+    """ combine GFED5e eco and spe from VNP and VJ1 """
+    import shutil
+
+    print(f"Combining GFED5eNRT data for {yr}-{mo}-{day} from VNP and VJ1...")
+    fnm_eco_VNP, fnm_eco_VJ1, fnm_eco_CMB, fnm_spe_VNP, fnm_spe_VJ1, fnm_spe_CMB = get_GFED5e_allfile_paths(yr, mo, day)
+
+    if os.path.exists(fnm_eco_VNP) and (not os.path.exists(fnm_eco_VJ1)):
+        shutil.copyfile(fnm_eco_VNP, fnm_eco_CMB)
+        shutil.copyfile(fnm_spe_VNP, fnm_spe_CMB)       
+    elif os.path.exists(fnm_eco_VJ1) and (not os.path.exists(fnm_eco_VNP)): 
+        shutil.copyfile(fnm_eco_VJ1, fnm_eco_CMB)
+        shutil.copyfile(fnm_spe_VJ1, fnm_spe_CMB)     
+    else:
+        # use simple average to combine all dataarrays in VNP and VJ1 files
+        combine_files_by_average(fnm_eco_VNP, fnm_eco_VJ1, fnm_eco_CMB)
+        combine_files_by_average(fnm_spe_VNP, fnm_spe_VJ1, fnm_spe_CMB)
+
+    # push combined files to WUR
+    upload_file_WUR(fnm_eco_CMB)
+    upload_file_WUR(fnm_spe_CMB)
 
 def update_to_now():
     """Wrapper function to update GFED5eNRT data to the latest available VIIRS data.
@@ -2942,13 +3153,12 @@ def update_to_now():
     current date is newer than the last available GFED5eNRT data, it iteratively
     calls `run_1day` for each missing day to update the dataset.
     """
-    from datetime import datetime, timedelta
 
     # Get the current date and the last available date of GFED5eNRT EM data
-    date_now = datetime.now().date()
+    date_now = datetime.datetime.now().date()
     year_now = date_now.year
     date_GFED5 = get_GFED5_lastday(year_now)
-    
+        
     # If the last availabe date is before the current date, call `run_1day()` for each day between the two dates
     if date_now > date_GFED5:
         print(f"VIIRS data is newer than GFED5 data, updating to {date_now}")
@@ -2956,10 +3166,12 @@ def update_to_now():
 
         # Iterate through each day that needs to be updated
         for day_offset in range(1, date_difference.days + 1):
-            date_run = date_GFED5 + timedelta(days=day_offset)
+            date_run = date_GFED5 + datetime.timedelta(days=day_offset)
             print(f"Processing update for {date_run.year}-{date_run.month}-{date_run.day}...")
             # Always use IMG option for operational update
-            run_1day(date_run.year, date_run.month, date_run.day, IMG=True, upd=True)
+            run_1day(date_run.year, date_run.month, date_run.day, IMG=True, upd=True, sat='VNP')
+            run_1day(date_run.year, date_run.month, date_run.day, IMG=True, upd=True, sat='VJ1')
+            combineVNPVJ1_1day(date_run.year, date_run.month, date_run.day)
     else:
         print("GFED5 data is already up to date with VIIRS data.")
         
@@ -2967,7 +3179,6 @@ def update_to_now():
     print("clean daily data")
     clean_files_year(year_now)
     
-# other bulk run functions
 def run_1mon(yr, mo, IMG=False, upd=False):
     ''' generate GFED5eNRT for all days in a single month: call `run_1day()` for each day
     '''
@@ -2979,6 +3190,493 @@ def run_1mon(yr, mo, IMG=False, upd=False):
         run_1day(yr, mo, day, IMG=IMG, upd=upd)
 
 # ----------------------------------------------------------------------------------------------------
+# GFEDextNRT remedy run functions
+# ----------------------------------------------------------------------------------------------------
+
+def run_1day_remedy(yr, mo, day, IMG=True, upd=False, sat='VNP'):
+    """Generates GFED5eNRT data for a single day retrospectively. No data uploading is needed.
+
+    This function converts Visible Infrared Imaging Radiometer Suite (VIIRS) Active Fire
+    (VAF) data into Burned Area (BA) and Emissions (EM) using Emission Factor
+    (EFA) and Fuel Consumption (FC) lookup tables.
+
+    The VAF fire location data can be obtained from two sources:
+    - Standard VNP14IMGML location data (when `IMG` is False).
+    - Data downloaded and converted from VNP14IMG image data (when `IMG` is True).
+      If VNP14IMG data is unavailable, VNP14IMG_NRT image data will be used.
+
+    Args:
+        yr (int): The year for which to generate data.
+        mo (int): The month for which to generate data.
+        day (int): The day for which to generate data.
+        IMG (bool, optional): If True, download and convert VIIRS IMG data to IMGDL.
+                               If False, use pre-downloaded VNP14IMGML data.
+                               Defaults to True.
+        upd (bool, optional): If True, forces an update of fire location data,
+                              even if the files already exist. Defaults to False.
+    """
+
+    print(f"Running for {yr}-{mo}-{day}")
+
+    print("...downloading data from NASA server and creating fire location data...")
+    if IMG:
+        dlflag = make_VNP14IMGDL(yr, mo, day, upd=upd, sat=sat)
+    else:
+        print("...using pre-downloaded VNP14IMGML data...")
+        dlflag = True
+
+    if not dlflag:
+        print(f"Warning: No data available for {yr}-{mo}-{day}.")
+        return
+    
+    print("...reading and preprocessing VIIRS active fire location data...")
+    dfFC = readpreprocess_DL(yr, mo, day, IMG=IMG, sat=sat)
+
+    print("...recording VIIRS active fires in each 500m grid...")
+    processor = MODISTileProcessor()
+    nVAFC = recordVAF500m(dfFC, yr, mo, day=day, sat=sat, processor=processor)
+
+    print("...recording VIIRS active fires in each 0.25deg grid...")
+    if nVAFC > 0:
+        ds_VAF_types,ds_VAF_bioms = cal_VAFp25_alltiles_1day(yr, mo, day, sat=sat)
+        sav_VAFp25_alltiles_1day(ds_VAF_types,ds_VAF_bioms,yr,mo,day,sat=sat)
+
+        print("...calculating scaled BA for each 0.25deg grid...")
+        cal_BA_scled_day(yr, mo, day, sat=sat)
+        print("...calculating scaled EM for each 0.25deg grid...")
+        cal_EM_scled_day(yr, mo, day, sat=sat)
+
+        print("...generating GFED5eNRTeco (16-class combined VAF, BA, EM) data...")
+        fnmeco = make_GFED5eco(yr, mo, day,sat=sat)
+
+        print("...generating GFED5eNRTspe (all-species EM data)...")
+        fnmspe = make_EMspecies(yr, mo, day,sat=sat)
+
+    else:
+        print(f"No active fires were detected by VIIRS for {yr}-{mo}-{day}")
+
+def run_yearly_combine(target_yr, target_mo, target_day):
+    """
+    Loops from Jan 1st of the target year up to the specified date
+    and runs the combineVNPVJ1_1day function.
+    """
+    # 1. Define the start and end dates
+    start_date = f"{target_yr}-01-01"
+    end_date = f"{target_yr}-{target_mo:02d}-{target_day:02d}"
+    
+    # 2. Generate the range of dates (inclusive)
+    # freq='D' ensures we get every single day
+    date_series = pd.date_range(start=start_date, end=end_date, freq='D')
+    
+    print(f"Starting processing from {start_date} to {end_date}...")
+    print(f"Total days to process: {len(date_series)}")
+
+    # 3. Loop and call your function
+    for current_date in date_series:
+        yr = current_date.year
+        mo = current_date.month
+        day = current_date.day
+        
+        try:
+            # Formatting strings to show progress (e.g., "Processing 2025-01-01")
+            print(f"Processing: {yr}-{mo:02d}-{day:02d}", end='\r')
+            
+            # Call your specific function
+            combineVNPVJ1_1day(yr, mo, day)
+            
+        except Exception as e:
+            print(f"\n[!] Error on {yr}-{mo:02d}-{day:02d}: {e}")
+            # Optional: 'continue' to skip errors, or 'break' to stop the whole loop
+            continue
+
+    print("\nProcessing complete.")
+# ----------------------------------------------------------------------------------------------------
+# GFEDext run using standard VIIRS data (ST)
+# ----------------------------------------------------------------------------------------------------
+
+# run GFED5ext ST for all days within a month parallelly
+def readpreprocess_ML(yr,mo,sat='VNP'):
+    ''' read and preprocess the VIIRS monthly active fire location data
+    '''
+    # read monthly VIIRS fire locations from standard ML data
+    df_VNP_month = read_VNP14IMGML(yr,mo,sat=sat)
+
+    # add major LCT
+    df_VNP_month = adddfmjLCT(df_VNP_month)
+
+    # add DN flag
+    df_VNP_month = addDN(df_VNP_month, NRT=False)
+
+    # add sample adjustment weight
+    df_VNP_month = add_wgt_2_VNP(df_VNP_month, mo)
+
+    return df_VNP_month
+
+def day_prun_ST(df_VNP_month, sat, date_tuple):
+    """ run GFED5ext ST for 1 day
+    """
+    # print(f"Type of df_VNP_month: {type(df_VNP_month)}")
+    # print(f"sat: {sat}")
+
+    # get yr, mo, day from input date tuple
+    yr, mo, day = date_tuple
+
+    # # read daily VIIRS fire locations from standard ML data
+    # print("...reading VIIRS active fire locations...")
+    # df_VNP_sample = read_VNP14IMGML(yr,mo,day=day, sat=sat)
+
+    # get MODIS tile information using a class object (save running time)
+    processor = MODISTileProcessor()   
+
+    # extract daily VIIRS fire locations from monthly data
+    df_VNP_day = df_VNP_month[df_VNP_month['YYYYMMDD'].astype(str).str.endswith(str(day).zfill(2))]
+
+    # record fire locations to 500m rasters
+    print("...recording VIIRS active fire locations in each 500m grid...")
+    nVAFC = recordVAF500m(df_VNP_day, yr,mo,day=day, vhs=[0,35],vvs=[0,17], sat=sat, processor=processor)
+
+    # skip the day if no active fires were detected
+    if nVAFC > 0:
+        # record fire counts to 0.25 deg cells
+        print("...recording VIIRS active fires in each 0.25deg grid...")
+        ds_VAF_types,ds_VAF_bioms = cal_VAFp25_alltiles_1day(yr, mo, day, sat=sat)
+        sav_VAFp25_alltiles_1day(ds_VAF_types,ds_VAF_bioms,yr,mo,day,sat=sat)
+
+        # calculate scaled BA from AF
+        print("...calculating scaled BA for each 0.25deg grid...")
+        cal_BA_scled_day(yr, mo, day, sat=sat)
+
+        # calculate scaled EM from scaled BA
+        print("...calculating scaled EM for each 0.25deg grid...")
+        cal_EM_scled_day(yr, mo, day, sat=sat)
+
+        # generate GFED5ext_eco and GFED5ext_spe data files without uploading
+        print("...generating GFED5eNRTeco (16-class combined VAF, BA, EM) data...")
+        _ = make_GFED5eco(yr, mo, day,sat=sat)
+        print("...generating GFED5eNRTspe (all-species EM data)...")
+        _ = make_EMspecies(yr, mo, day,sat=sat)
+    
+    else:
+        print(f"No active fires were detected by VIIRS for {yr}-{mo}-{day}")
+
+def mo_prun_ST(yr, mo, sat = 'VNP', max_workers = 1):
+    """ wrapper to run GFED5ext for all days within a month parallelly 
+    """
+    from functools import partial
+    import concurrent.futures
+
+    print(f"--- Starting Parallel Processing ({datetime.datetime.now().strftime('%H:%M:%S')}) ---")
+
+    # list of days within a month
+    start_date = datetime.date(yr, mo, 1)
+    _, num_days = calendar.monthrange(yr, mo)
+    end_date = datetime.date(yr, mo, num_days)
+    date_list = []
+    current_date = start_date
+    while current_date <= end_date:
+        date_list.append((current_date.year, current_date.month, current_date.day))
+        current_date += datetime.timedelta(days=1)    
+    print(f"Total dates to process: {len(date_list)}")
+    print(date_list)
+
+    # read monthly VIIRS fire locations from standard ML data
+    print("...reading and preprocessing VIIRS active fire locations...")
+    df_VNP_month = readpreprocess_ML(yr,mo,sat=sat)
+
+    # use functools.partial to fix df_VNP_month and sat arguments
+    fixed_day_prun_ST = partial(day_prun_ST, df_VNP_month, sat)
+
+    # Execute daily tasks (day_prun_ST) in parallel using a Process Pool
+    start_time = time.time()
+    all_results = []
+    with concurrent.futures.ProcessPoolExecutor(max_workers=max_workers) as executor:
+        print(f"Using a maximum of {executor._max_workers} worker processes.")
+        results_iterator = executor.map(fixed_day_prun_ST, date_list)
+        for result in results_iterator:
+            print(result)
+            all_results.append(result)
+    end_time = time.time()
+    
+    print("\n--- Summary ---")
+    print(f"Parallel execution finished in {end_time - start_time:.2f} seconds.")
+
+# fill in missing days via linear interpolation
+def read_missingdays():
+    """ read missing VIIRS observation days from csv file
+    source: https://firms.modaps.eosdis.nasa.gov/api/missing_data/
+    """
+    df_missingVIIRS = pd.read_csv(dirData +'Input/standard_missing_data.csv', index_col=0, parse_dates=True)
+    df_missing_VNP = df_missingVIIRS[df_missingVIIRS['Satellite (Sensor)'] == 'Suomi NPP (VIIRS)'].index
+    df_missing_VJ1 = df_missingVIIRS[df_missingVIIRS['Satellite (Sensor)'] == 'NOAA-20 (VIIRS)'].index
+
+    return df_missing_VNP, df_missing_VJ1
+
+def find_nearest_available_days(yr, mo, day, df_missing):
+    """
+    Finds the nearest available date with data before and after the missing day.
+    
+    Args:
+        yr, mo, day (int): The date components of the missing day.
+        df_missing (pd.DatetimeIndex/list): Collection of ALL missing dates.
+        
+    Returns:
+        tuple[pd.Timestamp, pd.Timestamp]: The previous and next available dates.
+    """
+    date_missing = pd.Timestamp(year=yr, month=mo, day=day)
+    
+    # 1. Create a continuous date range for the surrounding period
+    # Use 30 days before and after as a safety net, though usually finding nearest is faster
+    start_date = date_missing - pd.Timedelta(days=30)
+    end_date = date_missing + pd.Timedelta(days=30)
+    date_range = pd.date_range(start=start_date, end=end_date, freq='D')
+    
+    # 2. Identify available dates (dates in the range that are NOT in df_missing)
+    # We convert df_missing to a DatetimeIndex for efficient set operations
+    if not isinstance(df_missing, pd.DatetimeIndex):
+        df_missing = pd.to_datetime(df_missing)
+
+    available_dates = date_range[~date_range.isin(df_missing)]
+    
+    # 3. Find the nearest preceding and succeeding dates
+    
+    # Nearest previous available date
+    # Look for dates in the available list that are strictly before the missing date
+    prev_dates = available_dates[available_dates < date_missing]
+    date_prev_found = prev_dates[-1] if not prev_dates.empty else None # Get the latest one (last element)
+    
+    # Nearest next available date
+    # Look for dates in the available list that are strictly after the missing date
+    next_dates = available_dates[available_dates > date_missing]
+    date_next_found = next_dates[0] if not next_dates.empty else None # Get the earliest one (first element)
+
+    # 4. Apply modification
+    # date_prev should be 1 day BEFORE the found nearest available previous date
+    date_prev = date_prev_found - pd.Timedelta(days=1) if date_prev_found is not None else None
+    
+    # date_next should be 1 day AFTER the found nearest available next date
+    date_next = date_next_found + pd.Timedelta(days=1) if date_next_found is not None else None
+
+    return date_prev, date_next
+
+def get_GFED5e_file_path(yr, mo, day, sat, product):
+    """ Helper function to construct the expected file path. """
+    if day == 0: # return monthly file path
+        date_str = str(yr)+'-'+str(mo).zfill(2)
+    else:
+        date_str = strymd(yr, mo, day)
+        # The file naming convention is assumed to be: GFED5eNRT[product]_[sat]_[ymd].nc
+
+    return dirData + f'Output/{yr}/GFED5eNRT{product}_{sat}_{date_str}.nc'
+
+def get_GFED5e_allfile_paths(yr, mo, day):
+    fnm_eco_VNP = get_GFED5e_file_path(yr, mo, day, sat='VNP', product='eco')
+    fnm_eco_VJ1 = get_GFED5e_file_path(yr, mo, day, sat='VJ1', product='eco')
+    fnm_eco_CMB = get_GFED5e_file_path(yr, mo, day, sat='CMB', product='eco') 
+    fnm_spe_VNP = get_GFED5e_file_path(yr, mo, day, sat='VNP', product='spe')
+    fnm_spe_VJ1 = get_GFED5e_file_path(yr, mo, day, sat='VJ1', product='spe')
+    fnm_spe_CMB = get_GFED5e_file_path(yr, mo, day, sat='CMB', product='spe')    
+    return fnm_eco_VNP, fnm_eco_VJ1, fnm_eco_CMB, fnm_spe_VNP, fnm_spe_VJ1, fnm_spe_CMB
+
+def fillin_1day(yr, mo, day, date_prev, date_next, sat):
+    """ 
+    Generates GFED5e eco and spe files for a missing day using linear 
+    interpolation from the specified previous and future dates.
+    """
+    date_missing = pd.Timestamp(year=yr, month=mo, day=day)
+    
+    if date_prev is None or date_next is None:
+        print(f"  Skipping fill for {date_missing.date()}: Cannot find both bounding available dates.")
+        return
+        
+    # Calculate interpolation weights
+    td_prev_to_missing = (date_missing - date_prev).days
+    td_missing_to_fut = (date_next - date_missing).days
+    td_total = (date_next - date_prev).days
+    
+    # If td_total is 0, something is wrong, but standard formula should handle > 0
+    if td_total == 0:
+        print(f"  [ERROR] Previous and next date are the same for {date_missing.date()}. Skipping.")
+        return
+
+    # W_prev = (Time distance from missing to future) / (Total time distance)
+    weight_prev = td_missing_to_fut / td_total
+    # W_fut = (Time distance from previous to missing) / (Total time distance)
+    weight_fut = td_prev_to_missing / td_total
+    
+    print(f"  Bounding days: Prev={date_prev.date()}, Next={date_next.date()}. Weights: Prev={weight_prev:.3f}, Next={weight_fut:.3f}.")
+
+    
+    # Loop through 'eco' and 'spe' products and perform interpolation
+    for product in ['eco', 'spe']:
+        fnm_prev = get_GFED5e_file_path(date_prev.year, date_prev.month, date_prev.day, sat, product)
+        fnm_fut = get_GFED5e_file_path(date_next.year, date_next.month, date_next.day, sat, product)
+        fnm_out = get_GFED5e_file_path(yr, mo, day, sat, product)
+        
+        try:
+            # Check for file existence before loading (robustness)
+            if not os.path.exists(fnm_prev) or not os.path.exists(fnm_fut):
+                print(f"  [WARNING] Data file missing for {product} on one of the bounding dates. Skipping {product}.")
+                continue
+
+            # Open the datasets
+            ds_prev = xr.open_dataset(fnm_prev, decode_times=False)
+            ds_fut = xr.open_dataset(fnm_fut, decode_times=False)
+            
+            # Linear Interpolation: ds_interp = (ds_prev * W_prev) + (ds_fut * W_fut)
+            ds_interp = (ds_prev * weight_prev) + (ds_fut * weight_fut)
+        
+            # Update time coordinate
+            new_date = datetime.date(yr,mo,day)
+            new_time_coord = [np.datetime64(new_date)]
+            ds_interp = ds_interp.assign_coords(time=new_time_coord)
+            
+            # Update attributes and save
+            ds_interp.attrs = ds_prev.attrs
+            ds_interp.attrs['interpolation_note'] = f'Linear interpolation using {date_prev.date()} and {date_next.date()} data.'
+            
+            to_netcdf(ds_interp, fnm_out)
+            print(f"  -> Saved interpolated {product} file: {os.path.basename(fnm_out)}")
+            
+            ds_prev.close()
+            ds_fut.close()
+
+        except Exception as e:
+            print(f"  [ERROR] Failed to process {product} file for {date_missing.date()}: {e}")
+            
+    return
+
+def fillin_1mon(sat='VNP',m=[2024,6]):
+    """ generate GFED5e eco and spe files for days with missing VIIRS observation """
+
+    # read missing VIIRS observation days
+    df_missing_VNP, df_missing_VJ1 = read_missingdays()
+    if sat == 'VNP':
+        df_missing = df_missing_VNP
+    elif sat == 'VJ1':
+        df_missing = df_missing_VJ1
+
+    fillindays = df_missing[(df_missing.year == m[0]) & (df_missing.month == m[1])].sort_values()
+    
+    for d in fillindays:
+        yr, mo, day = d.year, d.month, d.day
+        print(f"\nProcessing missing VIIRS observation for {sat} on {yr}-{mo:02d}-{day:02d}...")
+        
+        # find nearest available date with data before and after the missing day
+        date_prev, date_next = find_nearest_available_days(yr, mo, day, df_missing)
+        
+        print(yr,mo,day,date_prev,date_next)
+        # generate GFED5e eco and spe files for the missing day
+        fillin_1day(yr, mo, day, date_prev, date_next, sat=sat)
+
+# combine VNP and VJ1 data to generate final GFED5eNRT data
+def combine_files_by_average(file_vnp, file_vj1, file_combined):
+    """
+    Combines two NetCDF files (VNP and VJ1) by calculating a simple average
+    of all data variables and saving the result to a new NetCDF file.
+
+    Args:
+        file_vnp (str): Path to the NetCDF file from the VNP sensor.
+        file_vj1 (str): Path to the NetCDF file from the VJ1 sensor.
+        file_combined (str): Path where the averaged NetCDF file should be saved.
+    """
+    import xarray as xr
+    import os
+
+    # 1. Check if input files exist (although the main function checks this, it's good practice here too)
+    if not os.path.exists(file_vnp):
+        print(f"  [ERROR] VNP file not found: {file_vnp}")
+        return
+    if not os.path.exists(file_vj1):
+        print(f"  [ERROR] VJ1 file not found: {file_vj1}")
+        return
+
+    try:
+        # 2. Open the datasets
+        # We use decode_times=False to avoid issues with non-standard time units in some NetCDF files
+        ds_vnp = xr.open_dataset(file_vnp, decode_times=False)
+        ds_vj1 = xr.open_dataset(file_vj1, decode_times=False)
+        
+        # 3. Perform the simple average
+        # xarray automatically aligns datasets based on coordinate names and performs arithmetic element-wise.
+        # This assumes both datasets are on the same grid (i.e., have the same dimensions and coordinates).
+        print(f"  Averaging data from VNP and VJ1...")
+        ds_combined = (ds_vnp + ds_vj1) / 2.0
+        
+        # Optional: Copy global attributes from one of the source files and add a processing note
+        ds_combined.attrs = ds_vnp.attrs
+        ds_combined.attrs['processing_note'] = 'Combined by simple average of VNP and VJ1 datasets.'
+
+        # 4. Save the combined dataset to a new NetCDF file
+        to_netcdf(ds_combined, file_combined)
+        print(f"  Successfully saved combined file: {file_combined}")
+
+    except FileNotFoundError as e:
+        print(f"  [ERROR] A file was not found: {e}")
+    except xr.MergeError as e:
+        print(f"  [ERROR] Datasets could not be merged (possibly incompatible dimensions/coordinates): {e}")
+    except Exception as e:
+        print(f"  [ERROR] An unexpected error occurred during processing: {e}")
+    finally:
+        # Ensure datasets are closed
+        try:
+            if 'ds_vnp' in locals():
+                ds_vnp.close()
+            if 'ds_vj1' in locals():
+                ds_vj1.close()
+        except NameError:
+            pass # Variables were not defined due to an early error
+        except Exception as e:
+             print(f"  [WARNING] Error closing datasets: {e}")
+
+def combineVNPVJ1(yr, mo):
+    """ combine GFED5e eco and spe from VNP and VJ1 """
+    import calendar
+    import shutil
+
+    # read missing VIIRS observation days
+    df_missing_VNP, df_missing_VJ1 = read_missingdays()
+
+    # loop through all days in the month    
+    ndays = calendar.monthrange(yr, mo)[1]
+    for day in range(1, ndays+1):
+        print(f"Combining GFED5eNRT data for {yr}-{mo}-{day} from VNP and VJ1...")
+        # fnm_eco_VNP = get_GFED5e_file_path(yr, mo, day, sat='VNP', product='eco')
+        # fnm_eco_VJ1 = get_GFED5e_file_path(yr, mo, day, sat='VJ1', product='eco')
+        # fnm_eco_CMB = get_GFED5e_file_path(yr, mo, day, sat='CMB', product='eco') # Assuming 'CMB' is the satellite code for combined
+        # fnm_spe_VNP = get_GFED5e_file_path(yr, mo, day, sat='VNP', product='spe')
+        # fnm_spe_VJ1 = get_GFED5e_file_path(yr, mo, day, sat='VJ1', product='spe')
+        # fnm_spe_CMB = get_GFED5e_file_path(yr, mo, day, sat='CMB', product='spe') # Assuming 'CMB' is the satellite code for combined
+        fnm_eco_VNP, fnm_eco_VJ1, fnm_eco_CMB, fnm_spe_VNP, fnm_spe_VJ1, fnm_spe_CMB = get_GFED5e_allfile_paths(yr, mo, day)
+        daystamp = pd.Timestamp(year=yr, month=mo, day=day)
+        if (daystamp in df_missing_VNP) and (daystamp not in df_missing_VJ1):
+            # copy VJ1 files to combined files
+            shutil.copyfile(fnm_eco_VJ1, fnm_eco_CMB)
+            shutil.copyfile(fnm_spe_VJ1, fnm_spe_CMB)
+        elif (daystamp not in df_missing_VNP) and (daystamp in df_missing_VJ1):
+            # copy VNP files to combined files
+            shutil.copyfile(fnm_eco_VNP, fnm_eco_CMB)
+            shutil.copyfile(fnm_spe_VNP, fnm_spe_CMB)
+        else:
+            # use simple average to combine all dataarrays in VNP and VJ1 files
+            combine_files_by_average(fnm_eco_VNP, fnm_eco_VJ1, fnm_eco_CMB)
+            combine_files_by_average(fnm_spe_VNP, fnm_spe_VJ1, fnm_spe_CMB)
+
+def convert2mon(yr,mo,sat='CMB',product='eco'):
+    """ combine all daily GFED5e eco and spe files to monthly sums """
+    from glob import glob
+    date_str = str(yr)+'-'+str(mo).zfill(2)
+    fnms = glob(dirData + f'Output/{yr}/GFED5eNRT{product}_{sat}_{date_str}-??.nc')
+    ds = xr.open_mfdataset(fnms)
+    dsmon = ds.sum(dim='time')
+    fnmout = dirData + f'Output/{yr}/GFED5eNRT{product}_{sat}_{date_str}.nc'
+    to_netcdf(dsmon, fnmout)
+
+def convert2mon_all(yr,mo):
+    for sat in ['VNP','VJ1','CMB']:
+        for product in ['eco','spe']:
+            convert2mon(yr,mo,sat=sat,product=product)
+
+# ----------------------------------------------------------------------------------------------------
 # Main
 # ----------------------------------------------------------------------------------------------------
 if __name__ == '__main__':
@@ -2986,11 +3684,12 @@ if __name__ == '__main__':
     # ------------------------------------------------------------------
     # GFED5eNRT run
     # -------------
-
     update_to_now()  # Update GFED5eNRT to the latest date with VIIRS data
     update_to_now_figs()
+    # make_daily_emissions_table_yr(2025) # make daily emissions table for 2025
 
-    # run_1day(2025,7,20, IMG=True, upd=True)  # Derive GFED5 betaV BA and EM for 1 day
+    # 1day or 1mon test run
+    # run_1day(2025,11,11, IMG=True, upd=True)  # Derive GFED5 betaV BA and EM for 1 day
     # run_1day(2025,1,1, IMG=True, upd=False)
     # run_1mon(2025,1,IMG=True, upd=True)
     # run_1mon(2025,2,IMG=True, upd=True)
@@ -2998,11 +3697,37 @@ if __name__ == '__main__':
     # ------------------------------------------------------------------
     # GFED5e run
     # -----------
+    # yr, mo = 2023, 1
+    # mo_prun_ST(yr, mo, sat = 'VJ1', max_workers = 4)
 
-    # for mo in range(1, 13):
-    #    print(f"Running GFED5eNRT for month {mo} of 2024...")
-    #    run_1mon(2024, mo, IMG=False)
+    # fill in missing days
+    # fillin_1mon(sat='VNP',m=[2024,5])
+    # fillin_1mon(sat='VNP',m=[2024,6])
+    # fillin_1mon(sat='VNP',m=[2024,7])
+    # fillin_1mon(sat='VNP',m=[2024,9])
+    # fillin_1mon(sat='VNP',m=[2024,11])
+    # fillin_1mon(sat='VJ1',m=[2023,7])
+    # fillin_1mon(sat='VJ1',m=[2023,9])
+    # fillin_1mon(sat='VJ1',m=[2024,2])
+               
+    # yr = 2024
+    # for mo in range(1,12+1):
+    #     combineVNPVJ1(yr,mo)
 
+    # yr, mo = 2023, 1
+    # for mo in range(1,6+1):
+    #     convert2mon_all(yr,mo)
 
     # ------------------------------------------------------------------
-
+    # Remedy runs
+    # ------------------------------------------------------------------
+    # yr, mo, day = 2025, 2, 1
+    # import calendar
+    # for mo in range(9, 11+1):
+    #     ndays = calendar.monthrange(yr, mo)[1]
+    #     for day in range(1, ndays+1):
+    #         run_1day_remedy(yr, mo, day, IMG=True, upd=False, sat='VJ1')  # ~12 min/day -> 6 hour/mon -> 3 day/yr
+    # yr, mo = 2025, 12
+    # for day in range(1, 15+1):
+    #     run_1day_remedy(yr, mo, day, IMG=True, upd=False, sat='VJ1')
+    
