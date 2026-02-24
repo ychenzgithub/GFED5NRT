@@ -1,10 +1,10 @@
-# GFED5 Extension NRT Version (GFED5eNRT) Burned Area and Emissions Calculation
+# GFED5 Extension NRT Version (GFED5NRT) Burned Area and Emissions Calculation
 
 This Python script is a standalone tool designed to calculate the GFED5 extension NRT (Near Real-Time) version of burned area (BA) and emissions (EM) at a 0.25-degree resolution. It leverages VIIRS 375m active fire data and employs a 2-step scaling approach.
 
 ## Overview
 
-In this code, we derived the extension version of daily NRT GFED5 burned area and emissions (at 0.25 deg resolution) from the VIIRS 375m active fire data. The VIIRS active fire counts are recorded and categorized to different burning types based on land cover types. The GFED5eNRT burned area and emissions are calculated based on 2-step scaling approaches. First, pre-derived effective fire area (EFA) scalars were used to convert the daily VIIRS active fire number (VAF) to daily burned area at 0.25 degree resolution (GFED5eNRT BA). Then, pre-calculated fuel consumption (FC) scalars were combined with GFED5eNRT BA to derive daily burned area at 0.25 degree resolution (GFED5eNRT EM). We combined the output data into two data streams: GFED5eNRTeco contains VAF, BA and EM data for 16 classes; GFED5eNRTspe contains EM data for individual chemical (gas and aerosol) species.
+In this code, we derived the extension version of daily NRT GFED5 burned area and emissions (at 0.25 deg resolution) from the VIIRS 375m active fire data. The VIIRS active fire counts are recorded and categorized to different burning types based on land cover types. The GFED5NRT burned area and emissions are calculated based on 2-step scaling approaches. First, pre-derived effective fire area (EFA) scalars were used to convert the daily VIIRS active fire number (VAF) to daily burned area at 0.25 degree resolution (GFED5NRT BA). Then, pre-calculated fuel consumption (FC) scalars were combined with GFED5NRT BA to derive daily burned area at 0.25 degree resolution (GFED5NRT EM). We combined the output data into two data streams: GFED5NRTeco contains VAF, BA and EM data for 16 classes; GFED5NRTspe contains EM data for individual chemical (gas and aerosol) species.
 
 This code automates the process of searching for days needing updates, reading and updating VIIRS active fire data, recording VAF, applying scaling factors, generating output data files, and generating updated visualizations.
 
@@ -13,15 +13,15 @@ This code automates the process of searching for days needing updates, reading a
 The script expects and generates data within the following directory structure relative to `dirData`:
 
 - `Code/`: Contains the Python script itself.
-    - `GFED5eNRT.py`: main python code
+    - `GFED5NRT.py`: main python code
     - `userconfig.py`: configuration python code
-    - `GFED5eNRT.sh`: shell script for running the main python code
+    - `GFED5NRT.sh`: shell script for running the main python code
     - `requirements.txt`: python module requirements (for pip)
     - `environment.yml`: python virtual env requirements (for conda)
     - `README.md`: readme file
 - `Input/`: Stores all necessary input data files.
 - `Intermediate/`: Used for temporary data generated during processing (e.g., 500m VAF data).
-- `Output/`: Stores the final GFED5eNRT BA and EM data.
+- `Output/`: Stores the final GFED5NRT BA and EM data.
 
 ## Running Instructions
 
@@ -30,7 +30,7 @@ The script expects and generates data within the following directory structure r
     - running directory
     - system environment variables
     - sftp site information
-3.  **Run the code:** Execute the Python script `GFED5eNRT.py` or the shell script `GFED5eNRT.sh`
+3.  **Run the code:** Execute the Python script `GFED5NRT.py` or the shell script `GFED5NRT.sh`
 4.  **Automatic running:** Set up an automatic run schedule using tools such as [Cron](https://en.wikipedia.org/wiki/Cron). Since Cron launches /bin/sh without loading user-specific shell config files such as .bashrc, so the environment variables are missing. To fixed, either source the environment file in the script by adding `source ~/.bashrc` before the python execute line, or set the variables inside the cron job by adding `MY_ENV_VAR="some_value"`.
 
 ## Data
@@ -62,8 +62,8 @@ The `Input/` directory contains various datasets crucial for the calculations:
 - `EM/`: GFED5e NRT Emissions (EM) data.
 
 ### Output
-- `GFED5eNRTeco_<date>.nc`: Combined 16-class data (VAF + BA + EM).
-- `GFED5eNRTspe_<date>.nc`: Emissions for individual species.
+- `GFED5NRTeco_<date>.nc`: Combined 16-class data (VAF + BA + EM).
+- `GFED5NRTspe_<date>.nc`: Emissions for individual species.
 - Updated regional summary data and figures
 
 
@@ -115,7 +115,7 @@ The script follows a structured workflow:
     - Saves the EM data to NetCDF files.
     - Key functions: `read_FC`, `cal_EM_scled_day`.
 
-- **Step 5: Derive GFED5eNRTeco (16-class combined data VAF + BA + EM)**
+- **Step 5: Derive GFED5NRTeco (16-class combined data VAF + BA + EM)**
     - Combines VAF, BA, and EM data into a single 16-class dataset.
     - Adds global and variable-specific attributes to the combined dataset.
     - Key functions: `getVAF16class`, `make_GFED5eco`, `add_GFED5eco_attrs`, `add_BA_attrs`, `add_EM_attrs`, `add_VAF_attrs`.

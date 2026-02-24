@@ -1,9 +1,9 @@
 """ GFED5e NRT
    ----------------
 
-    This is a stand-alone python code to run the GFED5 extension NRT version (GFED5eNRT) burned area (BA) and emissions (EM).
+    This is a stand-alone python code to run the GFED5 extension NRT version (GFED5NRT) burned area (BA) and emissions (EM).
    
-    In this code, we derived the extension version of daily NRT GFED5 burned area and emissions (at 0.25 deg resolution) from the VIIRS 375m active fire data. The VIIRS active fire counts are recorded and categorized to different burning types based on land cover types. The GFED5eNRT burned area and emissions are calculated based on 2-step scaling approaches. First, pre-derived effective fire area (EFA) scalars were used to convert the daily VIIRS active fire number (VAF) to daily burned area at 0.25 degree resolution (GFED5eNRT BA). Then, pre-calculated fuel consumption (FC) scalars were combined with GFED5eNRT BA to derive daily burned area at 0.25 degree resolution (GFED5eNRT EM). We combined the output data into two data streams: GFED5eNRTeco contains VAF, BA and EM data for 16 classes; GFED5eNRTspe contains EM data for individual chemical (gas and aerosol) species.
+    In this code, we derived the extension version of daily NRT GFED5 burned area and emissions (at 0.25 deg resolution) from the VIIRS 375m active fire data. The VIIRS active fire counts are recorded and categorized to different burning types based on land cover types. The GFED5NRT burned area and emissions are calculated based on 2-step scaling approaches. First, pre-derived effective fire area (EFA) scalars were used to convert the daily VIIRS active fire number (VAF) to daily burned area at 0.25 degree resolution (GFED5NRT BA). Then, pre-calculated fuel consumption (FC) scalars were combined with GFED5NRT BA to derive daily burned area at 0.25 degree resolution (GFED5NRT EM). We combined the output data into two data streams: GFED5NRTeco contains VAF, BA and EM data for 16 classes; GFED5NRTspe contains EM data for individual chemical (gas and aerosol) species.
 
     See `README.md` for more detail about this code.
     
@@ -135,6 +135,7 @@ def to_netcdf(ds, filename, mode="w", group=None):
         if ds[var].dtype.kind in {"f", "i"}  # compress float or int variables
     }
     ds.to_netcdf(filename, encoding=encoding, mode=mode, group=group)
+
 
 def nowarn():
     """
@@ -386,7 +387,7 @@ def read_GFED5eco(yr,mo,day,sat='VNP'):
     import xarray as xr
     import os
 
-    fnm = dirData+'Output/'+str(yr)+'/GFED5eNRTeco_'+sat+'_'+strymd(yr,mo,day)+'.nc'
+    fnm = dirData+'Output/'+str(yr)+'/GFED5NRTeco_'+sat+'_'+strymd(yr,mo,day)+'.nc'
     if os.path.exists(fnm):
         ds = xr.open_dataset(fnm)
     else:
@@ -2187,12 +2188,12 @@ def cal_EM_scled_day(yr, mo, day, sat='VNP'):
     fnmout = dirout+'/EM_'+sat+'_'+strymd(yr,mo,day)+'.nc'
     to_netcdf(ds_16class_yr, fnmout)
 
-# Step 5: Derive GFED5eNRTeco (16-class combined data VAF + BA + EM)
+# Step 5: Derive GFED5NRTeco (16-class combined data VAF + BA + EM)
 def add_GFED5eco_attrs(ds):
     now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
     ds.attrs['long_name'] = 'Global Fire Emissions Database v5eNRT ecosystem'
-    ds.attrs['standard_name'] = 'GFED5eNRTeco'
+    ds.attrs['standard_name'] = 'GFED5NRTeco'
     ds.attrs['creation_date'] = now
     ds.attrs['frequency'] = 'day'
     ds.attrs['grid'] = '0.25x0.25 degree latxlon grid'  # change 1x1 for pre-MODIS data
@@ -2346,12 +2347,12 @@ def make_GFED5eco(yr,mo,day, sat='VNP'):
     # save output
     dirout = dirData+'Output/'+str(yr)
     mkdir(dirout)
-    fnmout = dirout+'/GFED5eNRTeco_'+sat+'_'+strymd(yr,mo,day)+'.nc'
+    fnmout = dirout+'/GFED5NRTeco_'+sat+'_'+strymd(yr,mo,day)+'.nc'
     to_netcdf(ds_combined, fnmout)
     
     return fnmout 
 
-# Step 6: Derive GFED5eNRTspe (species emissions
+# Step 6: Derive GFED5NRTspe (species emissions
 def map16to6(EM16):
     """ Convert fire emissions (C) from 16 types to 6 types
     """
@@ -2388,7 +2389,7 @@ def add_GFED5spe_attrs(ds):
     now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
     ds.attrs['long_name'] = 'Global Fire Emissions Database v5eNRT species emissions'
-    ds.attrs['standard_name'] = 'GFED5eNRTspe'
+    ds.attrs['standard_name'] = 'GFED5NRTspe'
     ds.attrs['unit'] = "g/day"
     ds.attrs['creation_date'] = now
     ds.attrs['frequency'] = 'day'
@@ -2416,7 +2417,7 @@ def make_EMspecies(yr,mo,day,sat='VNP'):
     """ save 6-class EM files
     """
 
-    # read emission data from GFED5eNRT ecosystem
+    # read emission data from GFED5NRT ecosystem
     EM16 = read_GFED5eco(yr,mo,day,sat=sat).EM 
 
     # map EM to 6-classes
@@ -2446,7 +2447,7 @@ def make_EMspecies(yr,mo,day,sat='VNP'):
     # save output (only the sum emissions)
     dirout = dirData+'Output/'+str(yr)
     mkdir(dirout)
-    fnmout = dirout+'/GFED5eNRTspe_'+sat+'_'+strymd(yr,mo,day)+'.nc'
+    fnmout = dirout+'/GFED5NRTspe_'+sat+'_'+strymd(yr,mo,day)+'.nc'
     to_netcdf(ds_EM6_species_sum, fnmout)
 
     return fnmout
@@ -2508,9 +2509,9 @@ def readGFED5eco(yr, mo=None, day=None, vnm='EM', sat=None):
     from glob import glob
 
     if sat is None:
-        fnmhead = dirData + 'Output/' + str(yr) + '/GFED5eNRTeco_'
+        fnmhead = dirData + 'Output/' + str(yr) + '/GFED5NRTeco_'
     else:
-        fnmhead = dirData + 'Output/' + str(yr) + '/GFED5eNRTeco_' + sat + '_'
+        fnmhead = dirData + 'Output/' + str(yr) + '/GFED5NRTeco_' + sat + '_'
 
     if day is not None:
         fnm = fnmhead + str(yr) + '-' + str(mo).zfill(2) + '-' + str(day).zfill(2) + '.nc'
@@ -2547,7 +2548,7 @@ def readcumudata(yr, vnm='EM'):
     import pandas as pd
     import os
     
-    fnm = dirData + 'Output/' + str(yr) + '/GFED5eNRTcumu' + vnm + '_' + str(yr) + '.csv'
+    fnm = dirData + 'Output/' + str(yr) + '/GFED5NRTcumu' + vnm + '_' + str(yr) + '.csv'
     if not os.path.exists(fnm):
         return None
     else:
@@ -2603,7 +2604,7 @@ def updateGFEDregsum(df, df_day, yr, vnm):
         df_updated = pd.concat([df,df_day],axis=0)
     
     # save updated GFED regional sums to CSV
-    fnm = dirData + 'Output/' + str(yr) + '/GFED5eNRTcumu' + vnm + '_' + str(yr) + '.csv'
+    fnm = dirData + 'Output/' + str(yr) + '/GFED5NRTcumu' + vnm + '_' + str(yr) + '.csv'
     df_updated.to_csv(fnm)
          
     return df_updated
@@ -2669,7 +2670,7 @@ def monthly_to_yearly_dayofyear_mean(monthly_series):
 def make_daily_emissions_table_yr(yr):
     varnm = 'EM'
     sat = 'CMB'
-    ds_fires = xr.open_mfdataset(dirData+'Output/'+str(yr)+'/GFED5eNRTeco_'+sat+'_????-??-??.nc')
+    ds_fires = xr.open_mfdataset(dirData+'Output/'+str(yr)+'/GFED5NRTeco_'+sat+'_????-??-??.nc')
     da = ds_fires[varnm].sum(dim='lct') 
 
     # calculate mask 
@@ -2701,11 +2702,15 @@ def pltEMfig(df_updated,cumu=False):
 
     matplotlib.use('Agg')  # Non-interactive backend for PNG/PDF output, which is needed for some servers
 
-    lastdate = df_updated.index[-1]
-    currentyear = lastdate.year
+    lastdate = df_updated.index[-1] 
+    # currentyear = lastdate.year
     # currentyear = int(lastdate[0:4])
+    if isinstance(lastdate, datetime.date):
+        currentyear = lastdate.year
+    elif isinstance(lastdate, str):
+        currentyear = int(lastdate[0:4])
 
-   # calculate global sum from climatology data
+    # calculate global sum from climatology data
     dfmean = pd.read_csv(os.path.join(dirData, 'Input/DailyRegionalSum/daily_emissions_table_means_2002-2022.csv'),index_col=0)
     dfallyrs = {}
     for yr in range(2002, currentyear):
@@ -2841,11 +2846,111 @@ def generatetsfig(yr, vnm, df_updated=None):
 
     # save the figure
     fig_path = dirData + 'Output/' + str(yr) + '/' 
-    fnmdaily = fig_path+'GFED5eNRTdaily' + vnm + '_' + str(yr) + '.png'
-    fnmcumu = fig_path+'GFED5eNRTcumu' + vnm + '_' + str(yr) + '.png'
+    fnmdaily = fig_path+'GFED5NRTdaily' + vnm + '_' + str(yr) + '.png'
+    fnmcumu = fig_path+'GFED5NRTcumu' + vnm + '_' + str(yr) + '.png'
     figdaily.savefig(fnmdaily)
     figcumu.savefig(fnmcumu)
 
+    return fnmdaily, fnmcumu
+
+def generatetsfig_fordate(yr, mo, day, vnm='EM', sat=None):
+    """
+    Generate daily and cumulative emission time-series figures for an arbitrary date.
+
+    Unlike ``generatetsfig()``, which reads from a presaved cumulative CSV via
+    ``readcumudata()``, this function computes the required DataFrames on the
+    fly from the individual daily GFED5NRT NetCDF files so that figures can be
+    produced for any date that has emission data available.
+
+    Parameters
+    ----------
+    yr : int
+        Year of the target date.
+    mo : int
+        Month of the target date.
+    day : int
+        Day of the target date.
+    vnm : str, optional
+        Variable name to read (default is 'EM').
+    sat : str or None, optional
+        Satellite identifier passed to ``readGFED5eco()`` (e.g. 'VNP', 'VJ1',
+        'CMB').  If None, the default behaviour of ``readGFED5eco()`` is used.
+
+    Returns
+    -------
+    fnmdaily : str
+        File path of the saved daily-emissions figure.
+    fnmcumu : str
+        File path of the saved cumulative-emissions figure.
+    """
+
+    target_date = datetime.date(yr, mo, day)
+
+    # ------------------------------------------------------------------
+    # Check for a previously saved df_all; if available, load it directly
+    # ------------------------------------------------------------------
+    fig_path = dirData + 'Output/' + str(yr) + '/'
+    mkdir(fig_path)
+    fnm_csv = fig_path + 'GFED5NRTcumu' + vnm + '_' + str(yr) + '_' + strymd(yr, mo, day) + '.csv'
+
+    if os.path.exists(fnm_csv):
+        print(f"Reading cached regional-sum data from {fnm_csv}")
+        df_all = pd.read_csv(fnm_csv, index_col=0, parse_dates=True)
+    else:
+        # ------------------------------------------------------------------
+        # Step 1 & 2: Read daily emissions from Jan 1 to the target date and
+        #             compute regional sums for every day using doGFEDregsum()
+        # ------------------------------------------------------------------
+        df_all = None
+        current_date = datetime.date(yr, 1, 1)
+
+        while current_date <= target_date:
+            print(f"Processing {current_date.isoformat()}...")
+
+            # Read the daily gridded emission for this date
+            da = readGFED5eco(
+                current_date.year,
+                mo=current_date.month,
+                day=current_date.day,
+                vnm=vnm,
+                sat=sat,
+            )
+
+            if da is not None:
+                # Step 3: Calculate regional sums for this day
+                df_day = doGFEDregsum(da, current_date.year, current_date.month, current_date.day)
+
+                # Accumulate into a single DataFrame (rows = dates, cols = regions)
+                if df_all is None:
+                    df_all = df_day.copy()
+                else:
+                    df_all = pd.concat([df_all, df_day], axis=0)
+
+            current_date += datetime.timedelta(days=1)
+
+        if df_all is None:
+            print(f"No emission data found for {yr} up to {target_date.isoformat()}.")
+            return None, None
+
+        # Save df_all to CSV for future reuse
+        df_all.to_csv(fnm_csv)
+        print(f"Regional-sum data saved to {fnm_csv}")
+
+    # ------------------------------------------------------------------
+    # Step 4: Generate the two figures using pltEMfig()
+    # ------------------------------------------------------------------
+    figdaily = pltEMfig(df_all, cumu=False)
+    figcumu  = pltEMfig(df_all, cumu=True)
+
+    # ------------------------------------------------------------------
+    # Step 5: Save the figures
+    # ------------------------------------------------------------------
+    fnmdaily = fig_path + 'GFED5NRTdaily' + vnm + '_' + str(yr) + '_' + strymd(yr, mo, day) + '.png'
+    fnmcumu  = fig_path + 'GFED5NRTcumu'  + vnm + '_' + str(yr) + '_' + strymd(yr, mo, day) + '.png'
+    figdaily.savefig(fnmdaily)
+    figcumu.savefig(fnmcumu)
+
+    print(f"Figures saved:\n  daily: {fnmdaily}\n  cumu:  {fnmcumu}")
     return fnmdaily, fnmcumu
 
 def uploadtsfigs(fnmdaily, fnmcumu, UCI=True, WUR=True):
@@ -2866,7 +2971,7 @@ def uploadtsfigs(fnmdaily, fnmcumu, UCI=True, WUR=True):
 def update_to_now_figs(vnm='EM', genfig=True, uplfig=True, date_now=None):
     # The figure from CMB is produced
     
-    # Get the latest GFED5eNRT date
+    # Get the latest GFED5NRT date
     if date_now is None:
         date_now = datetime.datetime.now().date()
     date_GFED5 = get_GFED5_lastday(date_now.year)
@@ -2880,7 +2985,7 @@ def update_to_now_figs(vnm='EM', genfig=True, uplfig=True, date_now=None):
         if uplfig:
             uploadtsfigs(fnmdaily, fnmcumu, UCI=True, WUR=True)
     
-# Optional step : Convert GFED5eNRT from daily to monthly (may be deleted later)
+# Optional step : Convert GFED5NRT from daily to monthly (may be deleted later)
 def readGFED51NRT(yr,mo=None,day=None,vnm='EM'):
     """
     Read GFED5.1 NRT data for a given year, month, and day.
@@ -3011,7 +3116,7 @@ def make_monthlytable_yr(yr,vnm='EM'):
 # ----------------------------------------------------------------------------------------------------
 
 def run_1day(yr, mo, day, IMG=True, upd=False, sat='VNP'):
-    """Generates GFED5eNRT data for a single day.
+    """Generates GFED5NRT data for a single day.
 
     This function converts Visible Infrared Imaging Radiometer Suite (VIIRS) Active Fire
     (VAF) data into Burned Area (BA) and Emissions (EM) using Emission Factor
@@ -3063,11 +3168,11 @@ def run_1day(yr, mo, day, IMG=True, upd=False, sat='VNP'):
         print("...calculating scaled EM for each 0.25deg grid...")
         cal_EM_scled_day(yr, mo, day, sat=sat)
 
-        print("...generating GFED5eNRTeco (16-class combined VAF, BA, EM) data...")
+        print("...generating GFED5NRTeco (16-class combined VAF, BA, EM) data...")
         fnmeco = make_GFED5eco(yr, mo, day,sat=sat)
         upload_file_WUR(fnmeco)
 
-        print("...generating GFED5eNRTspe (all-species EM data)...")
+        print("...generating GFED5NRTspe (all-species EM data)...")
         fnmspe = make_EMspecies(yr, mo, day,sat=sat)
         upload_file_WUR(fnmspe)
 
@@ -3075,7 +3180,7 @@ def run_1day(yr, mo, day, IMG=True, upd=False, sat='VNP'):
         print(f"No active fires were detected by VIIRS for {yr}-{mo}-{day}")
 
 def get_GFED5_lastday(yr):
-    """Determines the latest date for which GFED5eNRT data has been created.
+    """Determines the latest date for which GFED5NRT data has been created.
 
     Args:
         yr (int): The year for which to check the latest date.
@@ -3090,8 +3195,8 @@ def get_GFED5_lastday(yr):
     # Construct the directory path for the specified data type
     dirGFED = os.path.join(dirData, 'Output', str(yr))
 
-    # List all `GFED5eNRTeco` files in the directory
-    all_paths = glob(dirGFED+'/GFED5eNRTeco*.nc',)
+    # List all `GFED5NRTeco` files in the directory
+    all_paths = glob(dirGFED+'/GFED5NRTeco*.nc',)
     files = [os.path.basename(path) for path in all_paths if os.path.isfile(path)]
 
     if not files:
@@ -3128,7 +3233,7 @@ def combineVNPVJ1_1day(yr,mo,day):
     """ combine GFED5e eco and spe from VNP and VJ1 """
     import shutil
 
-    print(f"Combining GFED5eNRT data for {yr}-{mo}-{day} from VNP and VJ1...")
+    print(f"Combining GFED5NRT data for {yr}-{mo}-{day} from VNP and VJ1...")
     fnm_eco_VNP, fnm_eco_VJ1, fnm_eco_CMB, fnm_spe_VNP, fnm_spe_VJ1, fnm_spe_CMB = get_GFED5e_allfile_paths(yr, mo, day)
 
     if os.path.exists(fnm_eco_VNP) and (not os.path.exists(fnm_eco_VJ1)):
@@ -3147,14 +3252,14 @@ def combineVNPVJ1_1day(yr,mo,day):
     upload_file_WUR(fnm_spe_CMB)
 
 def update_to_now():
-    """Wrapper function to update GFED5eNRT data to the latest available VIIRS data.
+    """Wrapper function to update GFED5NRT data to the latest available VIIRS data.
 
-    This function checks the last date for which GFED5eNRT data exists. If the
-    current date is newer than the last available GFED5eNRT data, it iteratively
+    This function checks the last date for which GFED5NRT data exists. If the
+    current date is newer than the last available GFED5NRT data, it iteratively
     calls `run_1day` for each missing day to update the dataset.
     """
 
-    # Get the current date and the last available date of GFED5eNRT EM data
+    # Get the current date and the last available date of GFED5NRT EM data
     date_now = datetime.datetime.now().date()
     year_now = date_now.year
     date_GFED5 = get_GFED5_lastday(year_now)
@@ -3180,7 +3285,7 @@ def update_to_now():
     clean_files_year(year_now)
     
 def run_1mon(yr, mo, IMG=False, upd=False):
-    ''' generate GFED5eNRT for all days in a single month: call `run_1day()` for each day
+    ''' generate GFED5NRT for all days in a single month: call `run_1day()` for each day
     '''
     import calendar
     from tqdm import trange
@@ -3194,7 +3299,7 @@ def run_1mon(yr, mo, IMG=False, upd=False):
 # ----------------------------------------------------------------------------------------------------
 
 def run_1day_remedy(yr, mo, day, IMG=True, upd=False, sat='VNP'):
-    """Generates GFED5eNRT data for a single day retrospectively. No data uploading is needed.
+    """Generates GFED5NRT data for a single day retrospectively. No data uploading is needed.
 
     This function converts Visible Infrared Imaging Radiometer Suite (VIIRS) Active Fire
     (VAF) data into Burned Area (BA) and Emissions (EM) using Emission Factor
@@ -3246,10 +3351,10 @@ def run_1day_remedy(yr, mo, day, IMG=True, upd=False, sat='VNP'):
         print("...calculating scaled EM for each 0.25deg grid...")
         cal_EM_scled_day(yr, mo, day, sat=sat)
 
-        print("...generating GFED5eNRTeco (16-class combined VAF, BA, EM) data...")
+        print("...generating GFED5NRTeco (16-class combined VAF, BA, EM) data...")
         fnmeco = make_GFED5eco(yr, mo, day,sat=sat)
 
-        print("...generating GFED5eNRTspe (all-species EM data)...")
+        print("...generating GFED5NRTspe (all-species EM data)...")
         fnmspe = make_EMspecies(yr, mo, day,sat=sat)
 
     else:
@@ -3351,9 +3456,9 @@ def day_prun_ST(df_VNP_month, sat, date_tuple):
         cal_EM_scled_day(yr, mo, day, sat=sat)
 
         # generate GFED5ext_eco and GFED5ext_spe data files without uploading
-        print("...generating GFED5eNRTeco (16-class combined VAF, BA, EM) data...")
+        print("...generating GFED5NRTeco (16-class combined VAF, BA, EM) data...")
         _ = make_GFED5eco(yr, mo, day,sat=sat)
-        print("...generating GFED5eNRTspe (all-species EM data)...")
+        print("...generating GFED5NRTspe (all-species EM data)...")
         _ = make_EMspecies(yr, mo, day,sat=sat)
     
     else:
@@ -3464,9 +3569,9 @@ def get_GFED5e_file_path(yr, mo, day, sat, product):
         date_str = str(yr)+'-'+str(mo).zfill(2)
     else:
         date_str = strymd(yr, mo, day)
-        # The file naming convention is assumed to be: GFED5eNRT[product]_[sat]_[ymd].nc
+        # The file naming convention is assumed to be: GFED5NRT[product]_[sat]_[ymd].nc
 
-    return dirData + f'Output/{yr}/GFED5eNRT{product}_{sat}_{date_str}.nc'
+    return dirData + f'Output/{yr}/GFED5NRT{product}_{sat}_{date_str}.nc'
 
 def get_GFED5e_allfile_paths(yr, mo, day):
     fnm_eco_VNP = get_GFED5e_file_path(yr, mo, day, sat='VNP', product='eco')
@@ -3568,7 +3673,7 @@ def fillin_1mon(sat='VNP',m=[2024,6]):
         # generate GFED5e eco and spe files for the missing day
         fillin_1day(yr, mo, day, date_prev, date_next, sat=sat)
 
-# combine VNP and VJ1 data to generate final GFED5eNRT data
+# combine VNP and VJ1 data to generate final GFED5NRT data
 def combine_files_by_average(file_vnp, file_vj1, file_combined):
     """
     Combines two NetCDF files (VNP and VJ1) by calculating a simple average
@@ -3639,7 +3744,7 @@ def combineVNPVJ1(yr, mo):
     # loop through all days in the month    
     ndays = calendar.monthrange(yr, mo)[1]
     for day in range(1, ndays+1):
-        print(f"Combining GFED5eNRT data for {yr}-{mo}-{day} from VNP and VJ1...")
+        print(f"Combining GFED5NRT data for {yr}-{mo}-{day} from VNP and VJ1...")
         # fnm_eco_VNP = get_GFED5e_file_path(yr, mo, day, sat='VNP', product='eco')
         # fnm_eco_VJ1 = get_GFED5e_file_path(yr, mo, day, sat='VJ1', product='eco')
         # fnm_eco_CMB = get_GFED5e_file_path(yr, mo, day, sat='CMB', product='eco') # Assuming 'CMB' is the satellite code for combined
@@ -3665,10 +3770,10 @@ def convert2mon(yr,mo,sat='CMB',product='eco'):
     """ combine all daily GFED5e eco and spe files to monthly sums """
     from glob import glob
     date_str = str(yr)+'-'+str(mo).zfill(2)
-    fnms = glob(dirData + f'Output/{yr}/GFED5eNRT{product}_{sat}_{date_str}-??.nc')
+    fnms = glob(dirData + f'Output/{yr}/GFED5NRT{product}_{sat}_{date_str}-??.nc')
     ds = xr.open_mfdataset(fnms)
     dsmon = ds.sum(dim='time')
-    fnmout = dirData + f'Output/{yr}/GFED5eNRT{product}_{sat}_{date_str}.nc'
+    fnmout = dirData + f'Output/{yr}/GFED5NRT{product}_{sat}_{date_str}.nc'
     to_netcdf(dsmon, fnmout)
 
 def convert2mon_all(yr,mo):
@@ -3676,15 +3781,128 @@ def convert2mon_all(yr,mo):
         for product in ['eco','spe']:
             convert2mon(yr,mo,sat=sat,product=product)
 
+def reformat_GFED5NRT_eco(yr,sat='CMB'):
+    """
+    1. Read all monthly netcdf files generated by the convert2mon() function
+    2. Concatenate (along the time dimension) the monthly data within a year to a single file 
+    3. Reformat the data to match the specific format
+    4. Save to GFED5eco_YYYY_NRT.nc
+    """
+
+    months = range(1, 13)
+    ds_list = []
+    
+    # 1. Read all monthly files
+    for mo in months:
+        date_str = f"{yr}-{mo:02d}"
+        fnm = dirData + f'Output/{yr}/GFED5NRTeco_{sat}_{date_str}.nc'
+        if os.path.exists(fnm):
+            ds_mo = xr.open_dataset(fnm)
+            # Add time dimension (first day of the month)
+            dt = pd.to_datetime(f"{yr}-{mo:02d}-01")
+            ds_mo = ds_mo.expand_dims(time=[dt])
+            ds_list.append(ds_mo)
+            print(f"Read monthly file {fnm}")
+        else:
+            print(f"Warning: Missing monthly file {fnm}")
+
+    if not ds_list:
+        print(f"No data found for year {yr}")
+        return
+
+    # 2. Concatenate along time dimension
+    ds = xr.concat(ds_list, dim='time')
+    
+    # Sort by time just in case
+    ds = ds.sortby('time')
+
+    # Keep only BA and EM variables
+    ds = ds[['BA', 'EM']]
+
+    # 3. Reformat
+    # Dimensions: (lct, time, lat, lon)
+    ds = ds.transpose('lct', 'time', 'lat', 'lon')
+    
+    # Cast variables to float32
+    ds['EM'] = ds['EM'].astype(np.float32)
+    ds['BA'] = ds['BA'].astype(np.float32)
+
+    # Set variable attributes
+    ds.EM.attrs = {
+        'long_name': "emissions",
+        'standard_name': "EM",
+        'unit': "g C/mon",
+        # '_FillValue': np.nan
+    }
+    ds.BA.attrs = {
+        'long_name': "burned area",
+        'standard_name': "BA",
+        'unit': "m2/mon",
+        # '_FillValue': np.nan
+    }
+    
+    # Set lct values and attributes
+    ds['lct'] = EMLCnms 
+    ds.lct.attrs = {
+        'long_name': "ecosystem land cover type",
+        'standard_name': "lct",
+        'source': "GFED5 reclassified types (16-class), Table 2 of van der Werf et al. (2025)"
+    }
+    
+    # Set time values and attributes
+    base_date = pd.to_datetime(str(yr)+"-01-01")
+    time_days = [(pd.to_datetime(t) - base_date).days for t in ds.time.values]
+    ds['time'] = np.array(time_days, dtype='int64')
+    ds.time.attrs = {
+        'units': "days since "+str(yr)+"-01-01",
+        'calendar': "proleptic_gregorian"
+    }
+    
+    # Set lat/lon attributes
+    ds.lat.attrs = {
+        'units': "degrees_north",
+        'axis': "Y",
+        'long_name': "latitude",
+        'standard_name': "lat",
+    }
+    ds.lon.attrs = {
+        'units': "degrees_east",
+        'axis': "X",
+        'long_name': "longitude",
+        'standard_name': "lon",
+        # '_FillValue': np.nan
+    }
+    
+    # Global attributes
+    ds.attrs = {
+        'long_name': "Global Fire Emissions Database v5 NRT ecosystem",
+        'standard_name': "GFED5NRTeco",
+        'creation_date': datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
+        'frequency': "mon",
+        'grid': "0.25x0.25 degree latxlon grid",
+        'institution': "University of California, Irvine",
+        'license': "Data in this file is licensed under a Creative Commons Attribution- 4.0 International (CC BY 4.0) License(https://creativecommons.org/licenses/)",
+        'nominal_resolution': "0.25x0.25 degree",
+        'region': "global",
+        'source': "GFED5 NRT",
+        'contact': "Yang Chen (yang.chen@uci.edu)"
+    }
+
+    # 4. Save to file
+    fnmout = dirData + f'Output/{yr}/GFED5NRTeco_{sat}_{yr}.nc'
+    to_netcdf(ds, fnmout)
+    print(f"Successfully saved {fnmout}")
+
+
 # ----------------------------------------------------------------------------------------------------
 # Main
 # ----------------------------------------------------------------------------------------------------
 if __name__ == '__main__':
     # nowarn()
     # ------------------------------------------------------------------
-    # GFED5eNRT run
+    # GFED5NRT run
     # -------------
-    update_to_now()  # Update GFED5eNRT to the latest date with VIIRS data
+    update_to_now()  # Update GFED5NRT to the latest date with VIIRS data
     update_to_now_figs()
     # make_daily_emissions_table_yr(2025) # make daily emissions table for 2025
 
@@ -3698,7 +3916,7 @@ if __name__ == '__main__':
     # GFED5e run
     # -----------
     # yr, mo = 2023, 1
-    # mo_prun_ST(yr, mo, sat = 'VJ1', max_workers = 4)
+    # mo_prun_ST(yr, mo, sat = 'VJ1', max_workers = 4)   # run either VJ1 or VNP
 
     # fill in missing days
     # fillin_1mon(sat='VNP',m=[2024,5])
@@ -3710,13 +3928,16 @@ if __name__ == '__main__':
     # fillin_1mon(sat='VJ1',m=[2023,9])
     # fillin_1mon(sat='VJ1',m=[2024,2])
                
-    # yr = 2024
+    # yr = 2024  # combine VJ1 and VNP to generate CMB
     # for mo in range(1,12+1):
     #     combineVNPVJ1(yr,mo)
 
-    # yr, mo = 2023, 1
-    # for mo in range(1,6+1):
+    # yr, mo = 2025, 1  # convert to monthly data
+    # for mo in range(1,12+1):
     #     convert2mon_all(yr,mo)
+
+    # yr = 2023  # reformat to annual ecosystem files
+    # reformat_GFED5NRT_eco(yr,sat='CMB')
 
     # ------------------------------------------------------------------
     # Remedy runs

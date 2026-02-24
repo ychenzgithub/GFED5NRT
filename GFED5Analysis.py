@@ -1,4 +1,4 @@
-dirProj = '/home/ychen17/GFED5eNRT/'
+dirProj = '/home/ychen17/GFED5NRT/'
 
 import xarray as xr
 import pandas as pd
@@ -49,7 +49,7 @@ def getGFEDp25mask():
 def make_spe_regsum(varnm='CO', sat='CMB', yr= 2023):
     import xarray as xr
 
-    ds_fires = xr.open_mfdataset(dirProj+'Output/'+str(yr)+'/GFED5eNRTspe_'+sat+'_????-??-??.nc')
+    ds_fires = xr.open_mfdataset(dirProj+'Output/'+str(yr)+'/GFED5NRTspe_'+sat+'_????-??-??.nc')
     da = ds_fires[varnm]  # g C/day 
 
     # calculate mask 
@@ -92,9 +92,9 @@ def make_spe_regsum_optimized(varnm='CO', sat='CMB', yr=2023):
     # --- Monthly Processing Loop ---
     
     # 1. Find all monthly file patterns (YYYY-MM-??) for the given year
-    # This assumes the files are structured by YYYY/GFED5eNRTspe_..._YYYY-MM-DD.nc
+    # This assumes the files are structured by YYYY/GFED5NRTspe_..._YYYY-MM-DD.nc
     # The glob pattern will find all unique YYYY-MM prefixes
-    file_patterns = sorted(glob.glob(dirProj + f'Output/{yr}/GFED5eNRTspe_{sat}_{yr}-??-??.nc'))
+    file_patterns = sorted(glob.glob(dirProj + f'Output/{yr}/GFED5NRTspe_{sat}_{yr}-??-??.nc'))
     
     # Extract unique YYYY-MM identifiers to iterate over months
     for mo in range(1, 13):
@@ -103,7 +103,7 @@ def make_spe_regsum_optimized(varnm='CO', sat='CMB', yr=2023):
 
         # 2. Open only the files for the current month
         # This significantly reduces the initial memory footprint
-        file_path_pattern = dirProj + f'Output/{yr}/GFED5eNRTspe_{sat}_{month_str}-??.nc'
+        file_path_pattern = dirProj + f'Output/{yr}/GFED5NRTspe_{sat}_{month_str}-??.nc'
         
         # Use open_mfdataset for the monthly files
         print(file_path_pattern)
@@ -163,7 +163,7 @@ def make_spe_regsum_optimized(varnm='CO', sat='CMB', yr=2023):
 def make_eco_regsum(varnm='EM', sat='CMB', yr= 2023):
     import xarray as xr
 
-    ds_fires = xr.open_mfdataset(dirProj+'Output/'+str(yr)+'/GFED5eNRTeco_'+sat+'_????-??-??.nc')
+    ds_fires = xr.open_mfdataset(dirProj+'Output/'+str(yr)+'/GFED5NRTeco_'+sat+'_????-??-??.nc')
     da = ds_fires[varnm].sum(dim='lct') 
 
     # calculate mask 
@@ -196,7 +196,7 @@ def make_eco_regsum_optimized(
 
     # 1. Load data with Dask/Chunking (Crucial change)
     print(f'Loading data for {yr} using Dask...')
-    file_pattern = f'{dirProj}Output/{yr}/GFED5eNRTeco_{sat}_????-??-??.nc'
+    file_pattern = f'{dirProj}Output/{yr}/GFED5NRTeco_{sat}_????-??-??.nc'
     
     # Use chunks=chunk_size to enable Dask, which loads data lazily.
     # The computation is only triggered later by .compute().
@@ -274,15 +274,15 @@ def check_gfed_availability(directory, sat = 'VNP', tp='eco'):
     base_path = Path(directory)
     
     # 1. Identify all matching files
-    # Pattern: GFED5eNRTeco_VNP_2025-??-??.nc
-    files = sorted(list(base_path.glob("GFED5eNRT"+tp+"_"+sat+"_2025-??-??.nc")))
+    # Pattern: GFED5NRTeco_VNP_2025-??-??.nc
+    files = sorted(list(base_path.glob("GFED5NRT"+tp+"_"+sat+"_2025-??-??.nc")))
     
     if not files:
         print(f"No files matching the pattern were found in: {directory}")
         return
 
     # 2. Extract and sort dates
-    # Stem is the filename without .nc (e.g., 'GFED5eNRTeco_VNP_2025-08-28')
+    # Stem is the filename without .nc (e.g., 'GFED5NRTeco_VNP_2025-08-28')
     # We split by '_' and take the last part
     date_strings = sorted([f.stem.split('_')[-1] for f in files])
     dates = pd.to_datetime(date_strings)

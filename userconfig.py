@@ -11,7 +11,7 @@ import os
 # ------------------
 # Data directory
 # ------------------
-dirData = os.path.expanduser('~/GFED5eNRT/')
+dirData = os.path.expanduser('~/GFED5NRT/')
 
 # ------------------
 # Credentials
@@ -63,4 +63,4 @@ ftppw_WUR = os.environ.get("SFTP_WUR_PW")
 ftpport_WUR = 1022
 
 # The specific directory on the server to access.
-ftpdir_WUR = "/GFED5/GFED5.1ext_NRT_Beta/"
+ftpdir_WUR = "/GFED5/GFED5.1NRT/Update/2026/"
