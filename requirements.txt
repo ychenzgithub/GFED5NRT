@@ -12,3 +12,7 @@ netcdf4
 h5netcdf
 rasterio
 paramiko
+matplotlib
+dask
+GDAL
+tqdm

@@ -1,40 +1,82 @@
-# GFED5 Extension NRT Version (GFED5NRT) Burned Area and Emissions Calculation
+# GFED5 NRT Extension (GFED5NRT)
 
-This Python script is a standalone tool designed to calculate the GFED5 extension NRT (Near Real-Time) version of burned area (BA) and emissions (EM) at a 0.25-degree resolution. It leverages VIIRS 375m active fire data and employs a 2-step scaling approach.
+[![Python 3.9](https://img.shields.io/badge/python-3.9-blue.svg)](https://www.python.org/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 ## Overview
 
-In this code, we derived the extension version of daily NRT GFED5 burned area and emissions (at 0.25 deg resolution) from the VIIRS 375m active fire data. The VIIRS active fire counts are recorded and categorized to different burning types based on land cover types. The GFED5NRT burned area and emissions are calculated based on 2-step scaling approaches. First, pre-derived effective fire area (EFA) scalars were used to convert the daily VIIRS active fire number (VAF) to daily burned area at 0.25 degree resolution (GFED5NRT BA). Then, pre-calculated fuel consumption (FC) scalars were combined with GFED5NRT BA to derive daily burned area at 0.25 degree resolution (GFED5NRT EM). We combined the output data into two data streams: GFED5NRTeco contains VAF, BA and EM data for 16 classes; GFED5NRTspe contains EM data for individual chemical (gas and aerosol) species.
+The **GFED5 NRT Extension (GFED5NRT)** is a professional-grade scientific tool designed to calculate Near Real-Time (NRT) global burned area (BA) and fire emissions (EM) at a 0.25-degree spatial resolution. 
 
-This code automates the process of searching for days needing updates, reading and updating VIIRS active fire data, recording VAF, applying scaling factors, generating output data files, and generating updated visualizations.
+Building upon the Global Fire Emissions Database (GFED5), this system leverages **VIIRS 375m active fire data** from the Suomi NPP and NOAA-20 (JPSS-1) satellites. It employs a sophisticated two-step scaling methodology:
+1.  **BA Derivation:** Daily VIIRS active fire counts (VAF) are converted to burned area using pre-derived **Effective Fire Area (EFA)** scalars, categorized by region and land cover type.
+2.  **EM Derivation:** The calculated burned area is combined with pre-calculated **Fuel Consumption (FC)** scalars and species-specific **Emission Factors (EF)** to estimate chemical emissions.
 
-## Structure
+The system automates the entire pipeline from data acquisition and preprocessing to visualization and cloud synchronization.
 
-The script expects and generates data within the following directory structure relative to `dirData`:
+---
 
-- `Code/`: Contains the Python script itself.
-    - `GFED5NRT.py`: main python code
-    - `userconfig.py`: configuration python code
-    - `GFED5NRT.sh`: shell script for running the main python code
-    - `requirements.txt`: python module requirements (for pip)
-    - `environment.yml`: python virtual env requirements (for conda)
-    - `README.md`: readme file
-- `Input/`: Stores all necessary input data files.
-- `Intermediate/`: Used for temporary data generated during processing (e.g., 500m VAF data).
-- `Output/`: Stores the final GFED5NRT BA and EM data.
+## Data Products
 
-## Running Instructions
+The output is categorized by the VIIRS sensors used for derivation and partitioned into two primary data streams:
 
-1.  **Set up Python environment:** Ensure the following external Python modules are installed using `requirements.txt` (pip) or `environment.yml` (conda).
-2.  **Set up configurations:** Change values in `userconfig.py`
-    - running directory
-    - system environment variables
-    - sftp site information
-3.  **Run the code:** Execute the Python script `GFED5NRT.py` or the shell script `GFED5NRT.sh`
-4.  **Automatic running:** Set up an automatic run schedule using tools such as [Cron](https://en.wikipedia.org/wiki/Cron). Since Cron launches /bin/sh without loading user-specific shell config files such as .bashrc, so the environment variables are missing. To fixed, either source the environment file in the script by adding `source ~/.bashrc` before the python execute line, or set the variables inside the cron job by adding `MY_ENV_VAR="some_value"`.
+### Satellite Configurations
+*   **CMB (Combined):** Derived from both Suomi NPP and NOAA-20 VIIRS observations.
+*   **VNP:** Derived exclusively from Suomi NPP (SNPP) VIIRS data.
+*   **VJ1:** Derived exclusively from NOAA-20 (JPSS-1) VIIRS data.
 
-## Data
-### Input
+### Data Streams
+*   **GFED5NRTeco (Ecosystem):** Contains VAF, BA, and EM partitioned by 16 fire types (e.g., boreal forest, temperate grassland, tropical peat, deforestation).
+*   **GFED5NRTspe (Species):** Contains gridded daily and monthly emissions for carbon (C) and essential trace gases/aerosols (CO, CH4, NOx, PM2.5, BC, OC, etc.).
+
+---
+
+## Directory Structure
+
+```text
+GFED5NRT/
+├── Code/                   # Source code and configuration
+│   ├── GFED5NRT.py         # Core engine for BA and EM calculations
+│   ├── userconfig.py       # User-specific paths and credentials
+│   ├── GFED5NRT.sh         # Batch execution shell script
+│   ├── requirements.txt    # Python dependencies (pip)
+│   └── environment.yml     # Conda environment definition
+├── Input/                  # Critical auxiliary data (masks, scalars, EF tables)
+├── Intermediate/           # Temporary processing files (500m VAF tiles)
+└── Output/                 # Final NetCDF products
+```
+
+---
+
+## Installation & Setup
+
+### 1. Environment Configuration
+Ensure you have a Python 3.9+ environment. You can install the required dependencies using either Conda or Pip:
+
+**Using Conda:**
+```bash
+conda env create -f Code/environment.yml
+conda activate gfed5enrt
+```
+
+**Using Pip:**
+```bash
+pip install -r Code/requirements.txt
+```
+
+### 2. User Configuration
+Update the `Code/userconfig.py` file with your specific environment details:
+*   Project root directory (`dirData`).
+*   Earthdata Login credentials (stored via environment variables like `EARTHDATA_PAT`). See `3. Authentication` for details.
+*   Optional: SFTP server details for data synchronization.
+
+### 3. Authentication
+The code requires NASA Earthdata credentials to download VIIRS data. For security, export your token as an environment variable in your `~/.bashrc`:
+```bash
+export EARTHDATA_PAT="your_token_here"
+```
+
+### 4. Prepare input data
+
 The `Input/` directory contains various datasets crucial for the calculations:
 - `GFED51VFA_regtp.csv`: Scalar for VAF to BA conversion.
 - `GFED51FC_regtp.csv`: Scalar for BA to EM conversion.
@@ -54,97 +96,50 @@ The `Input/` directory contains various datasets crucial for the calculations:
 - `MaskPeat/`: 500m Peatland mask.
 - `MaskDef_2022/`: 500m Deforestation mask for 2022.
 - `MCD12Q1_LCd_2022/`: 500m MODIS land cover data for 2022.
+---
 
-### Intermediate
-- `VAF500m/`: Daily VAF data at 500m resolution.
-- `VAF/`: Daily VAF data at 0.25 degree resolution.
-- `BA/`: GFED5e NRT Burned Area (BA) data.
-- `EM/`: GFED5e NRT Emissions (EM) data.
+## Usage
 
-### Output
-- `GFED5NRTeco_<date>.nc`: Combined 16-class data (VAF + BA + EM).
-- `GFED5NRTspe_<date>.nc`: Emissions for individual species.
-- Updated regional summary data and figures
+### Manual Execution
+To run the main processing pipeline for a specific date range or search for pending updates:
+```bash
+python Code/GFED5NRT.py
+```
 
+### Automated Processing (Cron)
+The system is designed for operational use. You can schedule the `GFED5NRT.sh` script via Cron. Note that Cron environments are minimal; ensure you source your profile in the script:
+```bash
+# Example Cron job (runs daily at 7:00 AM)
+0 7 * * * /bin/sh /path/to/GFED5NRT/Code/GFED5NRT.sh >> /path/to/GFED5NRT/Code/cron.log 2>&1
+```
+---
 
-## Code description
+## Technical Workflow
 
-### Burning Type Classification
+The system operates in six distinct phases:
 
-The script uses four burning type classification schemes:
-- **Modified MODIS LCT (MOD)**
-- **GFED5 BA LCT (GBA)**
-- **GFED5 16-class LCT (G16)**
-- **GFED5 6-class LCT (G6)**
+1.  **Ingestion (Step 0):** Automated download of VIIRS active fire data (NRT/Standard) from NASA Earthdata and conversion to daily fire location CSVs.
+2.  **Mapping (Step 1):** Alignment of fire detections to the MODIS 500m Sinusoidal grid, filtering static sources (gas flares, etc.), and assigning land cover types.
+3.  **Aggregation (Step 2):** Resampling of 500m detections to 0.25° grid cells, incorporating peat and deforestation climatologies.
+4.  **BA Calculation (Step 3):** Application of **EFA scalars** to convert VAF counts into burned area units across 16 land cover classes.
+5.  **EM Calculation (Step 4):** Conversion of BA to mass emissions using **Fuel Consumption (FC)** scalars.
+6.  **Product Generation (Step 5):** Consolidation into final NetCDF files (Ecosystem and Species streams) with full metadata and archival-quality compression.
 
-These are applied differently for EFA, FC, VFA, BA, and EM calculations.
-
-### Main workflow
-
-The script follows a structured workflow:
-
-- **Step 0: VIIRS data download and pre-processing**
-    - Reads Earthdata token.
-    - Fetches and downloads VIIRS active fire data (NRT or standard) using `wget`.
-    - Converts raw NetCDF data to daily fire location (DL) CSV files.
-    - Key functions: `read_earthdata_token`, `get_remote_ts`, `py_wget`, `download_VNP14IMG_daily`, `convert_VNP14IMG_to_DL`, `make_VNP14IMGDL`.
-
-- **Step 1: Record VAF at 500m resolution**
-    - Reads and preprocesses VIIRS daily active fire location data.
-    - Filters out static pixels and adds major land cover type and day/night flags.
-    - Records VAF data to MODIS-500m grid cells for each tile.
-    - Key functions: `readpreprocess_DL`, `removestaticpixels`, `adddfmjLCT`, `add_wgt_2_VNP`, `cal_VAF_1tile_1day`, `recordVAF500m`.
-
-- **Step 2: Record VAF sums (GBA groups format) at 0.25deg resolution**
-    - Converts 2D VAF maps to 1D arrays of counts in each 0.25 deg grid cell.
-    - Calculates and records VAF for all types and biomes, including peat and deforestation masks.
-    - Adjusts VAF based on deforestation climatology.
-    - Saves the processed VAF data to NetCDF files.
-    - Key functions: `cal_VAFp25_1tile_1day`, `cal_VAFp25_alltiles_1day`, `ds_VAF_1day_reformat`, `doVAFadjust_daily`.
-
-- **Step 3: Use pre-calculated scalar to convert VAF sums to BA sums (G16 format)**
-    - Reads GFED regional mask and daily VIIRS AF data.
-    - Applies EFA scalars to convert VAF to BA for different biomes and types.
-    - Converts the BA data to a 16-class format.
-    - Saves the BA data to NetCDF files.
-    - Key functions: `read_GFEDmask`, `read_VFA`, `mapGFEDregdata`, `cal_BA_scled_day`, `remapBAclass`.
-
-- **Step 4: Use pre-calculated scalar to convert BA sums to EM sums (G16 format)**
-    - Reads the 16-class BA data.
-    - Applies Fuel Consumption (FC) scalars to convert BA to EM.
-    - Saves the EM data to NetCDF files.
-    - Key functions: `read_FC`, `cal_EM_scled_day`.
-
-- **Step 5: Derive GFED5NRTeco (16-class combined data VAF + BA + EM)**
-    - Combines VAF, BA, and EM data into a single 16-class dataset.
-    - Adds global and variable-specific attributes to the combined dataset.
-    - Key functions: `getVAF16class`, `make_GFED5eco`, `add_GFED5eco_attrs`, `add_BA_attrs`, `add_EM_attrs`, `add_VAF_attrs`.
-
-### Constants
-
-- `G25_lats`, `G25_lons`: Latitude and longitude arrays for the 0.25-degree grid.
-- `GFEDnms`: List of GFED region names.
-- `LCnms`, `LCnms_full`: Land cover names for GFED5.1 burned area.
-- `EMLCnms`: 16-class Land cover names for GFED5.1 emissions.
+---
 
 
-### Utility Functions
+## References & Citations
 
-The script includes several utility functions for common tasks:
+If you use this dataset or code, please cite the following:
 
-- `strymd`, `strdoy`: Date formatting.
-- `mkdir`: Directory creation.
-- `to_netcdf`: Saving xarray Datasets to NetCDF with compression.
-- `nowarn`: Suppressing Python warnings.
-- `read_BA`, `read_EM`, `read_VNP14IMG_NRT_daily`, `read_VNP14IMGML_daily`, `read_GFED5eco`: Functions for reading intermediate and output data.
-- `MODtilegt`, `prj4sinus`, `sinusproj`, `FCpoints2arr`, `getMODlatlon`, `getMODlatlon_hdf`, `get_tile_paras`, `set_FCtile_ds`: Functions for processing VIIRS data at 500m MODIS sinusoidal grid cells.
-- `tif2arr`, `getMODLC`, `D2dcoarser`, `D2dfiner`, `getDEFM`, `getPEATM`: Functions for reading 500m ancillary raster data.
+*   **Chen et al.** (submitted). *Tracking recent extremes and interannual variability of global fire emissions using a near-real-time extension to the Global Fire Emissions Database.*
+*   **van der Werf et al.** (2025). *Landscape fire emissions from the 5th version of the Global Fire Emissions Database (GFED5).* Scientific Data.
 
-## Referrences
+---
 
-* Chen et al., Tracking recent extremes and long-term trends of global fire emissions using a near-real-time extension to the Global Fire Emissions Database, in preparation.
-* van der Werf et al., Landscape fire emissions from the 5th version of the Global Fire Emissions Database (GFED5), <i>Scientific Data</i>, 2025.
+## Contact
 
-## Concact
-
-Yang Chen (yang.chen@uci.edu)
+**Yang Chen**  
+Department of Earth System Science  
+University of California, Irvine  
+Email: [yang.chen@uci.edu](mailto:yang.chen@uci.edu)

@@ -1,3 +1,8 @@
+# Local analysis files
+Debug.ipynb
+GFED5Analysis.py
+GFED5NRTrun.py
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]

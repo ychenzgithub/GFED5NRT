@@ -18,3 +18,7 @@ dependencies:
   - h5netcdf
   - rasterio
   - paramiko
+  - matplotlib
+  - dask
+  - gdal
+  - tqdm
