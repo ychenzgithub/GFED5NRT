@@ -13,7 +13,6 @@ Building upon the Global Fire Emissions Database (GFED5), this system leverages 
 
 The system automates the entire pipeline from data acquisition and preprocessing to visualization and cloud synchronization.
 
----
 
 ## Data Products
 
@@ -28,7 +27,6 @@ The output is categorized by the VIIRS sensors used for derivation and partition
 *   **GFED5NRTeco (Ecosystem):** Contains VAF, BA, and EM partitioned by 16 fire types (e.g., boreal forest, temperate grassland, tropical peat, deforestation).
 *   **GFED5NRTspe (Species):** Contains gridded daily and monthly emissions for carbon (C) and essential trace gases/aerosols (CO, CH4, NOx, PM2.5, BC, OC, etc.).
 
----
 
 ## Directory Structure
 
@@ -45,7 +43,6 @@ GFED5NRT/
 └── Output/                 # Final NetCDF products
 ```
 
----
 
 ## Installation & Setup
 
@@ -96,7 +93,7 @@ The `Input/` directory contains various datasets crucial for the calculations:
 - `MaskPeat/`: 500m Peatland mask.
 - `MaskDef_2022/`: 500m Deforestation mask for 2022.
 - `MCD12Q1_LCd_2022/`: 500m MODIS land cover data for 2022.
----
+
 
 ## Usage
 
@@ -112,7 +109,7 @@ The system is designed for operational use. You can schedule the `GFED5NRT.sh` s
 # Example Cron job (runs daily at 7:00 AM)
 0 7 * * * /bin/sh /path/to/GFED5NRT/Code/GFED5NRT.sh >> /path/to/GFED5NRT/Code/cron.log 2>&1
 ```
----
+
 
 ## Technical Workflow
 
@@ -125,7 +122,12 @@ The system operates in six distinct phases:
 5.  **EM Calculation (Step 4):** Conversion of BA to mass emissions using **Fuel Consumption (FC)** scalars.
 6.  **Product Generation (Step 5):** Consolidation into final NetCDF files (Ecosystem and Species streams) with full metadata and archival-quality compression.
 
----
+
+
+## Data
+
+Routinely updated GFED5NRT products, including the reprocessed 2023–2024 data, are freely accessible at [www.globalfiredata.org](https://www.globalfiredata.org/). 
+
 
 
 ## References & Citations
@@ -135,7 +137,7 @@ If you use this dataset or code, please cite the following:
 *   **Chen et al.** (submitted). *Tracking recent extremes and interannual variability of global fire emissions using a near-real-time extension to the Global Fire Emissions Database.*
 *   **van der Werf et al.** (2025). *Landscape fire emissions from the 5th version of the Global Fire Emissions Database (GFED5).* Scientific Data.
 
----
+
 
 ## Contact
 
