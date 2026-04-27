@@ -62,6 +62,46 @@ TILE_SIZE_METERS = R0 * np.pi / 18. # m, height/width of MODIS tile
 NDIM_500M = 2400         # Number of cells (2400)
 REAL_RES_500M = ((abs(LIMIT_LEFT) * 2) / 36) / NDIM_500M # actual size for each pixel (500m)
 
+# Tiles that have never been present in years 2023-2025
+NEVER_PRESENT_TILES = [
+    'h00v00', 'h00v01', 'h00v02', 'h00v03', 'h00v04', 'h00v05', 'h00v06', 'h00v07', 'h00v08', 'h00v09', 'h00v11', 'h00v12', 'h00v13', 'h00v14', 'h00v15', 'h00v16', 'h00v17',
+    'h01v00', 'h01v01', 'h01v02', 'h01v03', 'h01v04', 'h01v05', 'h01v06', 'h01v07', 'h01v08', 'h01v09', 'h01v12', 'h01v13', 'h01v14', 'h01v15', 'h01v16', 'h01v17',
+    'h02v00', 'h02v01', 'h02v02', 'h02v03', 'h02v04', 'h02v05', 'h02v06', 'h02v07', 'h02v11', 'h02v12', 'h02v13', 'h02v14', 'h02v15', 'h02v16', 'h02v17',
+    'h03v00', 'h03v01', 'h03v02', 'h03v03', 'h03v04', 'h03v05', 'h03v08', 'h03v09', 'h03v12', 'h03v13', 'h03v14', 'h03v15', 'h03v16', 'h03v17',
+    'h04v00', 'h04v01', 'h04v02', 'h04v03', 'h04v04', 'h04v05', 'h04v06', 'h04v07', 'h04v08', 'h04v10', 'h04v12', 'h04v13', 'h04v14', 'h04v15', 'h04v16', 'h04v17',
+    'h05v00', 'h05v01', 'h05v02', 'h05v03', 'h05v04', 'h05v05', 'h05v06', 'h05v07', 'h05v08', 'h05v09', 'h05v10', 'h05v11', 'h05v12', 'h05v14', 'h05v15', 'h05v16', 'h05v17',
+    'h06v00', 'h06v01', 'h06v02', 'h06v03', 'h06v04', 'h06v05', 'h06v06', 'h06v07', 'h06v08', 'h06v09', 'h06v10', 'h06v11', 'h06v12', 'h06v13', 'h06v14', 'h06v15', 'h06v16', 'h06v17',
+    'h07v00', 'h07v01', 'h07v02', 'h07v04', 'h07v07', 'h07v08', 'h07v09', 'h07v10', 'h07v11', 'h07v12', 'h07v13', 'h07v14', 'h07v15', 'h07v16', 'h07v17',
+    'h08v00', 'h08v01', 'h08v02', 'h08v10', 'h08v12', 'h08v13', 'h08v14', 'h08v15', 'h08v16', 'h08v17',
+    'h09v00', 'h09v01', 'h09v02', 'h09v10', 'h09v11', 'h09v12', 'h09v13', 'h09v14', 'h09v15', 'h09v16', 'h09v17',
+    'h10v00', 'h10v01', 'h10v11', 'h10v12', 'h10v13', 'h10v14', 'h10v15', 'h10v16', 'h10v17',
+    'h11v00', 'h11v01', 'h11v13', 'h11v14', 'h11v15', 'h11v16', 'h11v17',
+    'h12v00', 'h12v06', 'h12v14', 'h12v15', 'h12v16', 'h12v17',
+    'h13v00', 'h13v05', 'h13v06', 'h13v07', 'h13v15', 'h13v16', 'h13v17',
+    'h14v00', 'h14v05', 'h14v06', 'h14v07', 'h14v08', 'h14v12', 'h14v13', 'h14v15', 'h14v17',
+    'h15v00', 'h15v03', 'h15v04', 'h15v06', 'h15v08', 'h15v09', 'h15v10', 'h15v11', 'h15v12', 'h15v13', 'h15v14', 'h15v16', 'h15v17',
+    'h16v00', 'h16v03', 'h16v04', 'h16v10', 'h16v11', 'h16v12', 'h16v13', 'h16v14', 'h16v15',
+    'h17v09', 'h17v10', 'h17v11', 'h17v12', 'h17v13', 'h17v14', 'h17v15',
+    'h18v00', 'h18v10', 'h18v11', 'h18v12', 'h18v13', 'h18v14', 'h18v15',
+    'h19v00', 'h19v13', 'h19v14',
+    'h20v00', 'h20v13', 'h20v14',
+    'h21v00', 'h21v12', 'h21v13', 'h21v14', 'h21v17',
+    'h22v00', 'h22v12', 'h22v17',
+    'h23v00', 'h23v08', 'h23v12', 'h23v13', 'h23v14', 'h23v17',
+    'h24v00', 'h24v01', 'h24v08', 'h24v09', 'h24v10', 'h24v11', 'h24v13', 'h24v14', 'h24v15', 'h24v16', 'h24v17',
+    'h25v00', 'h25v01', 'h25v09', 'h25v10', 'h25v11', 'h25v12', 'h25v13', 'h25v14', 'h25v15', 'h25v16', 'h25v17',
+    'h26v00', 'h26v01', 'h26v09', 'h26v10', 'h26v11', 'h26v12', 'h26v13', 'h26v14', 'h26v15', 'h26v16', 'h26v17',
+    'h27v00', 'h27v01', 'h27v02', 'h27v13', 'h27v14', 'h27v15', 'h27v16', 'h27v17',
+    'h28v00', 'h28v01', 'h28v02', 'h28v03', 'h28v10', 'h28v14', 'h28v15', 'h28v16', 'h28v17',
+    'h29v00', 'h29v01', 'h29v02', 'h29v03', 'h29v04', 'h29v14', 'h29v15', 'h29v16', 'h29v17',
+    'h30v00', 'h30v01', 'h30v02', 'h30v03', 'h30v04', 'h30v05', 'h30v14', 'h30v15', 'h30v16', 'h30v17',
+    'h31v00', 'h31v01', 'h31v02', 'h31v03', 'h31v04', 'h31v05', 'h31v06', 'h31v14', 'h31v15', 'h31v16', 'h31v17',
+    'h32v00', 'h32v01', 'h32v02', 'h32v03', 'h32v04', 'h32v05', 'h32v06', 'h32v08', 'h32v13', 'h32v14', 'h32v15', 'h32v16', 'h32v17',
+    'h33v00', 'h33v01', 'h33v02', 'h33v03', 'h33v04', 'h33v05', 'h33v06', 'h33v07', 'h33v12', 'h33v13', 'h33v14', 'h33v15', 'h33v16', 'h33v17',
+    'h34v00', 'h34v01', 'h34v02', 'h34v03', 'h34v04', 'h34v05', 'h34v06', 'h34v07', 'h34v08', 'h34v11', 'h34v12', 'h34v13', 'h34v14', 'h34v15', 'h34v16', 'h34v17',
+    'h35v00', 'h35v01', 'h35v02', 'h35v03', 'h35v04', 'h35v05', 'h35v06', 'h35v07', 'h35v11', 'h35v12', 'h35v13', 'h35v14', 'h35v15', 'h35v16', 'h35v17'
+]
+
 # ----------------------------------------------------------------------------------------------------
 # Utility functions
 # ----------------------------------------------------------------------------------------------------
@@ -987,7 +1027,7 @@ def getPEATM(vh,vv):
         return None
     
 # ----------------------------------------------------------------------------------------------------
-# GFEDextNRT steps
+# GFED5NRT calculation steps
 # ----------------------------------------------------------------------------------------------------
 
 # Step 0: VIIRS data download and pre-processing
@@ -1485,6 +1525,10 @@ def check_VAF_1tile_day(yr,mo,day,strhv,sat='VNP'):
     '''
     import os
 
+    # Skip tiles that have never been present in years 2023-2025
+    if strhv in NEVER_PRESENT_TILES:
+        return True  # assume they exist
+
     dirFC = dirData+'Intermediate/'+sat+'500m/'+str(yr)
 
     # if directory not there, create one
@@ -1533,6 +1577,11 @@ def recordVAF500m(dfFC, yr,mo,day=None, vhs=[0,35],vvs=[0,17],sat='VNP', process
             for vv in range(vvs[0],vvs[1]+1):
                 # print(f'Processing tile h{vh}v{vv}...')
                 strhv = 'h'+str(vh).zfill(2)+'v'+str(vv).zfill(2)
+                
+                # Skip tiles that have never been present
+                if strhv in NEVER_PRESENT_TILES:
+                    continue
+
                 if not check_VAF_1tile_day(yr,mo,day,strhv,sat=sat):  # if file exist, skip
                     cal_VAF_1tile_1day(dfFC,vh,vv,yr,mo,day,sat=sat, processor = processor)
     else:
@@ -1860,6 +1909,10 @@ def cal_VAFp25_alltiles_1day(yr,mo,day,vhs=[0,35],vvs=[0,17],sat='VNP'):
     for vh in range(vhs[0],vhs[1]+1):
         # print(vh)
         for vv in range(vvs[0],vvs[1]+1):
+            strhv = 'h'+str(vh).zfill(2)+'v'+str(vv).zfill(2)
+            if strhv in NEVER_PRESENT_TILES:
+                continue
+
             # calculate multi-index (iFTC,iLat,iLon) area sums from 1 tile
             area_1tile = cal_VAFp25_1tile_1day(yr,mo,day,vh,vv,sat=sat)
             if area_1tile is not None:
@@ -2985,7 +3038,10 @@ def update_to_now_figs(vnm='EM', genfig=True, uplfig=True, date_now=None):
         if uplfig:
             uploadtsfigs(fnmdaily, fnmcumu, UCI=True, WUR=True)
     
+# ----------------------------------------------------------------------------------------------------
 # Optional step : Convert GFED5NRT from daily to monthly (may be deleted later)
+# ----------------------------------------------------------------------------------------------------
+
 def readGFED51NRT(yr,mo=None,day=None,vnm='EM'):
     """
     Read GFED5.1 NRT data for a given year, month, and day.
@@ -3110,6 +3166,7 @@ def make_monthlytable_yr(yr,vnm='EM'):
     # save df to csv file
     outfile = dirData + 'Output/'+vnm+'/monthly/table_'+vnm+'_'+str(yr)+'.csv'
     df.to_csv(outfile)
+
 
 # ----------------------------------------------------------------------------------------------------
 # GFEDextNRT bulk run functions
@@ -3395,6 +3452,7 @@ def run_yearly_combine(target_yr, target_mo, target_day):
             continue
 
     print("\nProcessing complete.")
+
 # ----------------------------------------------------------------------------------------------------
 # GFEDext run using standard VIIRS data (ST)
 # ----------------------------------------------------------------------------------------------------
@@ -3913,12 +3971,15 @@ if __name__ == '__main__':
     # run_1mon(2025,2,IMG=True, upd=True)
 
     # ------------------------------------------------------------------
-    # GFED5e run
-    # -----------
-    # yr, mo = 2023, 1
-    # mo_prun_ST(yr, mo, sat = 'VJ1', max_workers = 4)   # run either VJ1 or VNP
+    # GFED5NRT standard data run
+    # --------------------------
+    # yr, mo = 2025, 1
+    # for mo in range(1,12+1):
+    #     mo_prun_ST(yr, mo, sat = 'VNP', max_workers = 4)
+    #     mo_prun_ST(yr, mo, sat = 'VJ1', max_workers = 4)
 
     # fill in missing days
+    # based on https://firms.modaps.eosdis.nasa.gov/api/missing_data/
     # fillin_1mon(sat='VNP',m=[2024,5])
     # fillin_1mon(sat='VNP',m=[2024,6])
     # fillin_1mon(sat='VNP',m=[2024,7])
@@ -3928,7 +3989,7 @@ if __name__ == '__main__':
     # fillin_1mon(sat='VJ1',m=[2023,9])
     # fillin_1mon(sat='VJ1',m=[2024,2])
                
-    # yr = 2024  # combine VJ1 and VNP to generate CMB
+    # yr = 2025  # combine VJ1 and VNP to generate CMB
     # for mo in range(1,12+1):
     #     combineVNPVJ1(yr,mo)
 
@@ -3936,12 +3997,12 @@ if __name__ == '__main__':
     # for mo in range(1,12+1):
     #     convert2mon_all(yr,mo)
 
-    # yr = 2023  # reformat to annual ecosystem files
+    # yr = 2025  # reformat to annual ecosystem files
     # reformat_GFED5NRT_eco(yr,sat='CMB')
 
     # ------------------------------------------------------------------
     # Remedy runs
-    # ------------------------------------------------------------------
+    # ------------
     # yr, mo, day = 2025, 2, 1
     # import calendar
     # for mo in range(9, 11+1):
